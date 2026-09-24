@@ -16,6 +16,29 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# --- CONTROL DE ACCESO MEDIANTE PIN ---
+PIN_CORRECTO = "6666"
+
+if "autenticado" not in st.session_state:
+    st.session_state.autenticado = False
+
+if not st.session_state.autenticado:
+    st.title("☕ Venta Café — Control de Acceso")
+    st.caption("Introduce el PIN de seguridad para acceder a la aplicación.")
+    
+    with st.form("form_login"):
+        pin_input = st.text_input("PIN de Acceso", type="password", placeholder="****")
+        btn_login = st.form_submit_button("🔓 Entrar", use_container_width=True)
+        
+        if btn_login:
+            if pin_input == PIN_CORRECTO:
+                st.session_state.autenticado = True
+                st.success("Acceso concedido.")
+                st.rerun()
+            else:
+                st.error("PIN incorrecto. Inténtalo de nuevo.")
+    st.stop()  # Detiene la ejecución para que no cargue el resto si no está autenticado
+
 # --- BASE DE DATOS LOCAL (SQLite) ---
 DB_NAME = "caja_diaria.db"
 
@@ -41,7 +64,6 @@ def init_db():
             importe REAL
         )
     ''')
-    # TABLA SEPARADA PARA CLIENTES (Para que no se borren al vaciar la caja)
     c.execute('''
         CREATE TABLE IF NOT EXISTS clientes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,10 +93,17 @@ def guardar_cliente_habitual(nombre_cliente):
 def obtener_todos_los_clientes():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("SELECT nombre FROM clientes ORDER BY nombre ASC")
-    clientes = [row[0] for row in c.fetchall()]
+    c.execute("SELECT id, nombre FROM clientes ORDER BY nombre ASC")
+    clientes = c.fetchall()
     conn.close()
     return clientes
+
+def eliminar_cliente_habitual(id_cliente):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("DELETE FROM clientes WHERE id = ?", (id_cliente,))
+    conn.commit()
+    conn.close()
 
 def agregar_cobro(fecha, hora, cliente, albaran, importe):
     guardar_cliente_habitual(cliente)
@@ -127,7 +156,6 @@ def vaciar_caja_del_dia():
     c = conn.cursor()
     c.execute("DELETE FROM cobros")
     c.execute("DELETE FROM gastos")
-    # NOTA: NO borramos la tabla clientes
     conn.commit()
     conn.close()
 
@@ -146,12 +174,20 @@ for d in denominaciones:
 if "persona_entrega" not in st.session_state:
     st.session_state["persona_entrega"] = ""
 
-st.title("☕ Venta Café — Caja Diaria")
-st.caption(f"📅 Fecha: {fecha_mostrar}")
+# Cabecera principal con botón de cerrar sesión
+col_tit, col_logout = st.columns([4, 1])
+with col_tit:
+    st.title("☕ Venta Café — Caja Diaria")
+    st.caption(f"📅 Fecha: {fecha_mostrar}")
+with col_logout:
+    if st.button("🔒 Salir"):
+        st.session_state.autenticado = False
+        st.rerun()
 
 df_cobros = obtener_cobros_hoy(fecha_hoy)
 df_gastos = obtener_gastos_hoy(fecha_hoy)
-clientes_historicos = obtener_todos_los_clientes()
+lista_clientes = obtener_todos_los_clientes()
+nombres_clientes = [c[1] for c in lista_clientes]
 
 # --- PESTAÑAS DE NAVEGACIÓN ---
 tab_cobros, tab_gastos, tab_arqueo, tab_pdf = st.tabs(["💰 Cobros", "💸 Gastos", "🧮 Arqueo Billetes", "📄 PDF Cierre"])
@@ -177,8 +213,8 @@ with tab_cobros:
         st.info(f"✏️ Editando cobro ID #{st.session_state.edit_id}")
 
     with st.form("form_cobro", clear_on_submit=not es_edicion):
-        if clientes_historicos and not es_edicion:
-            cliente_sel = st.selectbox("Cliente habitual", ["-- Nuevo cliente --"] + clientes_historicos)
+        if nombres_clientes and not es_edicion:
+            cliente_sel = st.selectbox("Cliente habitual", ["-- Nuevo cliente --"] + nombres_clientes)
             cliente_inp = st.text_input("Nombre del Cliente (si es nuevo o diferente)", value="")
             cliente = cliente_inp.strip() if cliente_inp.strip() else (cliente_sel if cliente_sel != "-- Nuevo cliente --" else "")
         else:
@@ -237,6 +273,21 @@ with tab_cobros:
                         st.rerun()
 
     st.divider()
+
+    # --- OPCIONES DE BORRADO DE CLIENTES ---
+    if lista_clientes:
+        with st.expander("👥 Gestionar / Borrar Clientes Habituales"):
+            st.caption("Elimina clientes de la lista desplegable si ya no son necesarios.")
+            for c_id, c_nombre in lista_clientes:
+                col_c1, col_c2 = st.columns([3, 1])
+                with col_c1:
+                    st.write(f"• **{c_nombre}**")
+                with col_c2:
+                    if st.button("🗑️ Borrar", key=f"del_cli_{c_id}"):
+                        eliminar_cliente_habitual(c_id)
+                        st.rerun()
+
+    # --- BOTÓN PARA PONER A CERO LA CAJA ---
     st.write("### 🔄 Reiniciar Caja")
     st.caption("Pone a cero los cobros, gastos y el arqueo de billetes/monedas. **Conserva la lista de clientes habituales**.")
     
