@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import sqlite3
 from datetime import datetime
 import io
 from reportlab.lib.pagesizes import A4
@@ -7,236 +8,390 @@ from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-# Configuración de página optimizada para móvil
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
-    page_title="Caja Diaria - Cobros",
-    page_icon="💰",
+    page_title="Caja Diaria - Venta Café",
+    page_icon="☕",
     layout="centered",
     initial_sidebar_state="collapsed"
 )
 
-# Inicializar variables de sesión (Persistencia durante la sesión actual)
-if "cobros" not in st.session_state:
-    st.session_state.cobros = []
+# --- BASE DE DATOS LOCAL (SQLite) ---
+DB_NAME = "caja_diaria.db"
 
-if "edit_index" not in st.session_state:
-    st.session_state.edit_index = None
-
-# Título y Encabezado
-st.title("💰 Caja Diaria de Cobros")
-st.caption(f"Fecha actual: {datetime.now().strftime('%d/%m/%Y')}")
-
-# --- SECCIÓN 1: FORMULARIO DE ENTRADA / EDICIÓN ---
-st.subheader("📝 Registrar Cobro")
-
-# Comprobar si estamos en modo edición
-es_edicion = st.session_state.edit_index is not None
-val_cliente = ""
-val_importe = 0.0
-val_albaran = ""
-
-if es_edicion:
-    idx = st.session_state.edit_index
-    cobro_editar = st.session_state.cobros[idx]
-    val_cliente = cobro_editar["cliente"]
-    val_importe = cobro_editar["importe"]
-    val_albaran = cobro_editar.get("albaran", "")
-    st.info(f"✏️ Editando cobro #{idx + 1}")
-
-with st.form(key="form_cobro", clear_on_submit=not es_edicion):
-    cliente = st.text_input("Nombre del Cliente", value=val_cliente, placeholder="Ej: Bar Plaza / Juan Pérez")
-    albaran = st.text_input("Nº de Albarán / Factura (Opcional)", value=val_albaran, placeholder="Ej: ALB-2026-089")
-    importe = st.number_input("Importe en Metálico (€)", min_value=0.0, step=0.5, value=val_importe, format="%.2f")
-    
-    col_sub1, col_sub2 = st.columns(2)
-    with col_sub1:
-        btn_guardar = st.form_submit_button("💾 Guardar Cobro" if not es_edicion else "🔄 Actualizar", use_container_width=True)
-    with col_sub2:
-        if es_edicion:
-            btn_cancelar = st.form_submit_button("❌ Cancelar", use_container_width=True)
-        else:
-            btn_cancelar = False
-
-if btn_cancelar and es_edicion:
-    st.session_state.edit_index = None
-    st.rerun()
-
-if btn_guardar:
-    if not cliente.strip():
-        st.error("Por favor, introduce el nombre del cliente.")
-    elif importe <= 0:
-        st.error("El importe debe ser mayor que 0.00 €.")
-    else:
-        hora_actual = datetime.now().strftime("%H:%M")
-        if es_edicion:
-            st.session_state.cobros[st.session_state.edit_index] = {
-                "cliente": cliente.strip(),
-                "albaran": albaran.strip(),
-                "importe": float(importe),
-                "hora": st.session_state.cobros[st.session_state.edit_index]["hora"]
-            }
-            st.session_state.edit_index = None
-            st.success("✅ Cobro actualizado correctamente.")
-        else:
-            st.session_state.cobros.append({
-                "cliente": cliente.strip(),
-                "albaran": albaran.strip(),
-                "importe": float(importe),
-                "hora": hora_actual
-            })
-            st.success("✅ Cobro registrado con éxito.")
-        st.rerun()
-
-# --- SECCIÓN 2: RESUMEN Y LISTADO DE COBROS ---
-st.divider()
-
-total_efectivo = sum(c["importe"] for c in st.session_state.cobros)
-
-# Destacado con el Total
-st.metric(label="💵 TOTAL METÁLICO ACUMULADO", value=f"{total_efectivo:.2f} €")
-
-if len(st.session_state.cobros) > 0:
-    st.subheader("📋 Detalle de Cobros del Día")
-    
-    for i, c in enumerate(st.session_state.cobros):
-        with st.expander(f"📌 #{i+1} | {c['cliente']} — {c['importe']:.2f} € ({c['hora']})"):
-            st.write(f"**Cliente:** {c['cliente']}")
-            st.write(f"**Albarán:** {c['albaran'] if c['albaran'] else 'N/A'}")
-            st.write(f"**Importe:** {c['importe']:.2f} €")
-            st.write(f"**Hora:** {c['hora']}")
-            
-            col_ed, col_el = st.columns(2)
-            with col_ed:
-                if st.button("✏️ Editar", key=f"edit_{i}", use_container_width=True):
-                    st.session_state.edit_index = i
-                    st.rerun()
-            with col_el:
-                if st.button("🗑️ Eliminar", key=f"del_{i}", use_container_width=True):
-                    st.session_state.cobros.pop(i)
-                    if st.session_state.edit_index == i:
-                        st.session_state.edit_index = None
-                    st.rerun()
-
-    # Opción para vaciar caja
-    if st.button("🚨 Borrar todos los cobros", type="secondary"):
-        st.session_state.cobros = []
-        st.session_state.edit_index = None
-        st.rerun()
-else:
-    st.info("Aún no se han registrado cobros hoy.")
-
-# --- SECCIÓN 3: GENERACIÓN Y EXPORTACIÓN A PDF ---
-st.divider()
-st.subheader("📄 Generar Informe de Cierre (PDF)")
-
-def generar_pdf(cobros, total):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        rightMargin=36,
-        leftMargin=36,
-        topMargin=36,
-        bottomMargin=36
-    )
-    story = []
-    styles = getSampleStyleSheet()
-
-    title_style = ParagraphStyle(
-        'DocTitle',
-        parent=styles['Title'],
-        fontSize=20,
-        leading=24,
-        textColor=colors.HexColor('#1E293B'),
-        alignment=0,
-        spaceAfter=6
-    )
-    
-    subtitle_style = ParagraphStyle(
-        'DocSubtitle',
-        parent=styles['Normal'],
-        fontSize=10,
-        textColor=colors.HexColor('#64748B'),
-        spaceAfter=15
-    )
-
-    cell_style = ParagraphStyle(
-        'Cell',
-        parent=styles['Normal'],
-        fontSize=9,
-        leading=11,
-        textColor=colors.HexColor('#334155')
-    )
-
-    cell_bold_style = ParagraphStyle(
-        'CellBold',
-        parent=styles['Normal'],
-        fontSize=9,
-        leading=11,
-        fontName='Helvetica-Bold',
-        textColor=colors.HexColor('#0F172A')
-    )
-
-    # Encabezado
-    fecha_str = datetime.now().strftime('%d/%m/%Y - %H:%M')
-    story.append(Paragraph("Informe de Cierre de Caja en Metálico", title_style))
-    story.append(Paragraph(f"Fecha de emisión: {fecha_str}", subtitle_style))
-    story.append(Spacer(1, 10))
-
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
     # Tabla de cobros
-    data = [[
-        Paragraph("<b>Nº</b>", cell_bold_style),
-        Paragraph("<b>Hora</b>", cell_bold_style),
-        Paragraph("<b>Cliente</b>", cell_bold_style),
-        Paragraph("<b>Albarán / Doc.</b>", cell_bold_style),
-        Paragraph("<b>Importe (€)</b>", cell_bold_style)
-    ]]
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS cobros (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT,
+            hora TEXT,
+            cliente TEXT,
+            albaran TEXT,
+            importe REAL
+        )
+    ''')
+    # Tabla de gastos
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS gastos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT,
+            hora TEXT,
+            concepto TEXT,
+            importe REAL
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
-    for idx, c in enumerate(cobros, 1):
-        data.append([
-            Paragraph(str(idx), cell_style),
-            Paragraph(c['hora'], cell_style),
-            Paragraph(c['cliente'], cell_style),
-            Paragraph(c['albaran'] if c['albaran'] else "-", cell_style),
-            Paragraph(f"{c['importe']:.2f} €", cell_bold_style)
-        ])
+init_db()
 
-    # Fila de Total
-    data.append([
-        Paragraph("<b>TOTAL RECAUDADO</b>", cell_bold_style),
-        "", "", "",
-        Paragraph(f"<b>{total:.2f} €</b>", cell_bold_style)
-    ])
+# --- FUNCIONES DE BASE DE DATOS ---
+def obtener_cobros_hoy(fecha):
+    conn = sqlite3.connect(DB_NAME)
+    df = pd.read_sql_query("SELECT * FROM cobros WHERE fecha = ?", conn, params=(fecha,))
+    conn.close()
+    return df
 
-    table = Table(data, colWidths=[30, 50, 220, 120, 100])
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#F1F5F9')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#0F172A')),
-        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ('GRID', (0, 0), (-1, -2), 0.5, colors.HexColor('#E2E8F0')),
-        ('SPAN', (0, -1), (3, -1)),
-        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E2E8F0')),
-        ('LINEABOVE', (0, -1), (-1, -1), 1.5, colors.HexColor('#0F172A')),
-    ]))
+def agregar_cobro(fecha, hora, cliente, albaran, importe):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("INSERT INTO cobros (fecha, hora, cliente, albaran, importe) VALUES (?, ?, ?, ?, ?)",
+              (fecha, hora, cliente, albaran, importe))
+    conn.commit()
+    conn.close()
 
-    story.append(table)
-    doc.build(story)
-    buffer.seek(0)
-    return buffer
+def actualizar_cobro(id_cobro, cliente, albaran, importe):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("UPDATE cobros SET cliente = ?, albaran = ?, importe = ? WHERE id = ?",
+              (cliente, albaran, importe, id_cobro))
+    conn.commit()
+    conn.close()
 
-if len(st.session_state.cobros) > 0:
-    pdf_data = generar_pdf(st.session_state.cobros, total_efectivo)
-    nombre_archivo_pdf = f"Cierre_Caja_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+def eliminar_cobro(id_cobro):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("DELETE FROM cobros WHERE id = ?", (id_cobro,))
+    conn.commit()
+    conn.close()
+
+def obtener_gastos_hoy(fecha):
+    conn = sqlite3.connect(DB_NAME)
+    df = pd.read_sql_query("SELECT * FROM gastos WHERE fecha = ?", conn, params=(fecha,))
+    conn.close()
+    return df
+
+def agregar_gasto(fecha, hora, concepto, importe):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("INSERT INTO gastos (fecha, hora, concepto, importe) VALUES (?, ?, ?, ?)",
+              (fecha, hora, concepto, importe))
+    conn.commit()
+    conn.close()
+
+def eliminar_gasto(id_gasto):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("DELETE FROM gastos WHERE id = ?", (id_gasto,))
+    conn.commit()
+    conn.close()
+
+# --- ESTADO Y VARIABLES ---
+fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+fecha_mostrar = datetime.now().strftime("%d/%m/%Y")
+
+if "edit_id" not in st.session_state:
+    st.session_state.edit_id = None
+
+st.title("☕ Venta Café — Caja Diaria")
+st.caption(f"📅 Fecha: {fecha_mostrar}")
+
+# Cargar datos persistentes
+df_cobros = obtener_cobros_hoy(fecha_hoy)
+df_gastos = obtener_gastos_hoy(fecha_hoy)
+
+# --- PESTAÑAS DE NAVEGACIÓN ---
+tab_cobros, tab_gastos, tab_arqueo, tab_pdf = st.tabs(["💰 Cobros", "💸 Gastos", "🧮 Arqueo Billetes", "📄 PDF Cierre"])
+
+# ==========================================
+# PESTAÑA 1: COBROS (VENTAS CAFÉ)
+# ==========================================
+with tab_cobros:
+    st.subheader("📝 Registrar Cobro")
     
-    st.download_button(
-        label="📥 Descargar Reporte PDF",
-        data=pdf_data,
-        file_name=nombre_archivo_pdf,
-        mime="application/pdf",
-        use_container_width=True
-    )
-else:
-    st.caption("Registra al menos un cobro para habilitar la descarga del PDF.")
+    # Autocompletado de clientes usados previamente
+    clientes_registrados = df_cobros["cliente"].unique().tolist() if not df_cobros.empty else []
+    
+    es_edicion = st.session_state.edit_id is not None
+    row_edit = None
+    if es_edicion and not df_cobros.empty:
+        filtered = df_cobros[df_cobros["id"] == st.session_state.edit_id]
+        if not filtered.empty:
+            row_edit = filtered.iloc[0]
+
+    val_cliente = row_edit["cliente"] if row_edit is not None else ""
+    val_albaran = row_edit["albaran"] if row_edit is not None else ""
+    val_importe = float(row_edit["importe"]) if row_edit is not None else 0.0
+
+    if es_edicion:
+        st.info(f"✏️ Editando cobro ID #{st.session_state.edit_id}")
+
+    with st.form("form_cobro", clear_on_submit=not es_edicion):
+        if clientes_registrados and not es_edicion:
+            cliente_sel = st.selectbox("Cliente habitual", ["-- Nuevo cliente --"] + clientes_registrados)
+            cliente_inp = st.text_input("Nombre del Cliente (si es nuevo o diferente)", value="")
+            cliente = cliente_inp.strip() if cliente_inp.strip() else (cliente_sel if cliente_sel != "-- Nuevo cliente --" else "")
+        else:
+            cliente = st.text_input("Nombre del Cliente", value=val_cliente, placeholder="Ej: Bar Plaza / Ogi Berri")
+
+        albaran = st.text_input("Nº Albarán", value=val_albaran, placeholder="Ej: 10452")
+        importe = st.number_input("Importe (€)", min_value=0.0, step=0.5, value=val_importe, format="%.2f")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            btn_guardar = st.form_submit_button("💾 Guardar Cobro" if not es_edicion else "🔄 Actualizar", use_container_width=True)
+        with col2:
+            btn_cancelar = st.form_submit_button("❌ Cancelar", use_container_width=True) if es_edicion else False
+
+    if btn_cancelar and es_edicion:
+        st.session_state.edit_id = None
+        st.rerun()
+
+    if btn_guardar:
+        if not cliente:
+            st.error("Por favor, introduce el nombre del cliente.")
+        elif importe <= 0:
+            st.error("El importe debe ser mayor que 0.00 €.")
+        else:
+            hora_act = datetime.now().strftime("%H:%M")
+            if es_edicion:
+                actualizar_cobro(st.session_state.edit_id, cliente, albaran, importe)
+                st.session_state.edit_id = None
+                st.success("✅ Cobro actualizado.")
+            else:
+                agregar_cobro(fecha_hoy, hora_act, cliente, albaran, importe)
+                st.success("✅ Cobro registrado.")
+            st.rerun()
+
+    st.divider()
+    total_cobros = df_cobros["importe"].sum() if not df_cobros.empty else 0.0
+    st.metric("💵 TOTAL VENTAS CAFÉ", f"{total_cobros:.2f} €")
+
+    if not df_cobros.empty:
+        st.write("### Listado de Cobros del Día")
+        for _, row in df_cobros.iterrows():
+            with st.expander(f"📌 #{row['albaran'] or row['id']} | {row['cliente']} — {row['importe']:.2f} € ({row['hora']})"):
+                st.write(f"**Cliente:** {row['cliente']}")
+                st.write(f"**Albarán:** {row['albaran'] if row['albaran'] else 'N/A'}")
+                st.write(f"**Importe:** {row['importe']:.2f} €")
+                st.write(f"**Hora:** {row['hora']}")
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("✏️ Editar", key=f"edit_c_{row['id']}", use_container_width=True):
+                        st.session_state.edit_id = int(row['id'])
+                        st.rerun()
+                with c2:
+                    if st.button("🗑️ Eliminar", key=f"del_c_{row['id']}", use_container_width=True):
+                        eliminar_cobro(row['id'])
+                        st.rerun()
+
+# ==========================================
+# PESTAÑA 2: GASTOS DE CAJA
+# ==========================================
+with tab_gastos:
+    st.subheader("💸 Salidas / Gastos de Caja")
+    st.caption("PAGOS REALIZADOS EN METÁLICO DURANTE LA RUTA")
+
+    with st.form("form_gasto", clear_on_submit=True):
+        concepto_gasto = st.text_input("Concepto del Gasto", placeholder="Ej: Parking / Hielo / Gasoil")
+        importe_gasto = st.number_input("Importe Gasto (€)", min_value=0.0, step=0.5, format="%.2f")
+        btn_gasto = st.form_submit_button("💾 Registrar Gasto", use_container_width=True)
+
+    if btn_gasto:
+        if not concepto_gasto.strip():
+            st.error("Introduce el concepto del gasto.")
+        elif importe_gasto <= 0:
+            st.error("El importe debe ser mayor que 0.00 €.")
+        else:
+            agregar_gasto(fecha_hoy, datetime.now().strftime("%H:%M"), concepto_gasto.strip(), importe_gasto)
+            st.success("✅ Gasto registrado.")
+            st.rerun()
+
+    st.divider()
+    total_gastos = df_gastos["importe"].sum() if not df_gastos.empty else 0.0
+    st.metric("📉 TOTAL GASTOS", f"{total_gastos:.2f} €")
+
+    if not df_gastos.empty:
+        for _, row in df_gastos.iterrows():
+            col_g1, col_g2 = st.columns([3, 1])
+            with col_g1:
+                st.write(f"• **{row['concepto']}**: {row['importe']:.2f} € ({row['hora']})")
+            with col_g2:
+                if st.button("🗑️", key=f"del_g_{row['id']}"):
+                    eliminar_gasto(row['id'])
+                    st.rerun()
+
+# ==========================================
+# PESTAÑA 3: ARQUEO DE BILLETES Y MONEDAS
+# ==========================================
+with tab_arqueo:
+    st.subheader("🧮 Conteo Físico (Billetes y Monedas)")
+    st.caption("Rellena las unidades que llevas encima para comprobar que la caja cuadra.")
+
+    col_b, col_m = st.columns(2)
+
+    with col_b:
+        st.write("#### 💵 Billetes")
+        b100 = st.number_input("Billetes 100€", min_value=0, step=1, key="b100")
+        b50  = st.number_input("Billetes 50€", min_value=0, step=1, key="b50")
+        b20  = st.number_input("Billetes 20€", min_value=0, step=1, key="b20")
+        b10  = st.number_input("Billetes 10€", min_value=0, step=1, key="b10")
+        b5   = st.number_input("Billetes 5€", min_value=0, step=1, key="b5")
+
+    with col_m:
+        st.write("#### 🪙 Monedas")
+        m200 = st.number_input("Monedas 2,00€", min_value=0, step=1, key="m200")
+        m100 = st.number_input("Monedas 1,00€", min_value=0, step=1, key="m100")
+        m050 = st.number_input("Monedas 0,50€", min_value=0, step=1, key="m050")
+        m020 = st.number_input("Monedas 0,20€", min_value=0, step=1, key="m020")
+        m010 = st.number_input("Monedas 0,10€", min_value=0, step=1, key="m010")
+        m005 = st.number_input("Monedas 0,05€", min_value=0, step=1, key="m005")
+        m002 = st.number_input("Monedas 0,02€", min_value=0, step=1, key="m002")
+        m001 = st.number_input("Monedas 0,01€", min_value=0, step=1, key="m001")
+
+    # Cálculos arqueo
+    total_billetes = (b100*100) + (b50*50) + (b20*20) + (b10*10) + (b5*5)
+    total_monedas = (m200*2.0) + (m100*1.0) + (m050*0.5) + (m020*0.2) + (m010*0.1) + (m005*0.05) + (m002*0.02) + (m001*0.01)
+    total_efectivo_contado = total_billetes + total_monedas
+
+    # Cálculo Teórico = Ventas - Gastos
+    total_teorico = total_cobros - total_gastos
+    diferencia = total_efectivo_contado - total_teorico
+
+    st.divider()
+    st.write(f"**Total Billetes:** {total_billetes:.2f} € | **Total Monedas:** {total_monedas:.2f} €")
+    st.metric("💰 EFECTIVO FÍSICO CONTADO", f"{total_efectivo_contado:.2f} €")
+
+    if total_efectivo_contado > 0:
+        if abs(diferencia) < 0.01:
+            st.success("✅ **¡LA CAJA CUADRA PERFECTAMENTE!**")
+        elif diferencia > 0:
+            st.warning(f"⚠️ **SOBRANTE EN CAJA:** +{diferencia:.2f} € respecto al teórico ({total_teorico:.2f} €)")
+        else:
+            st.error(f"❌ **FALTANTE EN CAJA:** {diferencia:.2f} € respecto al teórico ({total_teorico:.2f} €)")
+
+# ==========================================
+# PESTAÑA 4: INFORME PDF
+# ==========================================
+with tab_pdf:
+    st.subheader("📄 Generar Hoja de Cierre")
+    entregado_por = st.text_input("Persona que entrega:", value="", placeholder="Ej: Nombre del repartidor/comercial")
+
+    def generar_pdf_completo(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, persona):
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+        story = []
+        styles = getSampleStyleSheet()
+
+        title_style = ParagraphStyle('DocTitle', parent=styles['Title'], fontSize=16, leading=20, textColor=colors.HexColor('#1E293B'), alignment=0)
+        sub_style = ParagraphStyle('DocSub', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#475569'))
+        cell_style = ParagraphStyle('Cell', parent=styles['Normal'], fontSize=8, leading=10)
+        cell_bold = ParagraphStyle('CellB', parent=styles['Normal'], fontSize=8, leading=10, fontName='Helvetica-Bold')
+
+        # Cabecera
+        story.append(Paragraph("<b>VENTA CAFÉ — HOJA DE CIERRE DE CAJA</b>", title_style))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(f"<b>Fecha:</b> {fecha_mostrar} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Entregado por:</b> {persona if persona else '_________________'}", sub_style))
+        story.append(Spacer(1, 12))
+
+        # Tabla de Cobros
+        story.append(Paragraph("<b>VENTAS CAFÉ (ALBARANES)</b>", cell_bold))
+        story.append(Spacer(1, 4))
+        
+        data_c = [[Paragraph("<b>Nº Albarán</b>", cell_bold), Paragraph("<b>Cliente</b>", cell_bold), Paragraph("<b>Hora</b>", cell_bold), Paragraph("<b>Importe (€)</b>", cell_bold)]]
+        
+        if not cobros_df.empty:
+            for _, r in cobros_df.iterrows():
+                data_c.append([
+                    Paragraph(str(r['albaran']) if r['albaran'] else "-", cell_style),
+                    Paragraph(str(r['cliente']), cell_style),
+                    Paragraph(str(r['hora']), cell_style),
+                    Paragraph(f"{r['importe']:.2f} €", cell_bold)
+                ])
+        data_c.append([Paragraph("<b>TOTAL VENTAS</b>", cell_bold), "", "", Paragraph(f"<b>{t_cobros:.2f} €</b>", cell_bold)])
+
+        t_cobros_table = Table(data_c, colWidths=[90, 250, 70, 90])
+        t_cobros_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E2E8F0')),
+            ('GRID', (0, 0), (-1, -2), 0.5, colors.HexColor('#CBD5E1')),
+            ('SPAN', (0, -1), (2, -1)),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#F1F5F9')),
+            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
+            ('PADDING', (0, 0), (-1, -1), 4),
+        ]))
+        story.append(t_cobros_table)
+        story.append(Spacer(1, 12))
+
+        # Tabla Gastos si existen
+        if not gastos_df.empty:
+            story.append(Paragraph("<b>GASTOS / SALIDAS DE CAJA</b>", cell_bold))
+            story.append(Spacer(1, 4))
+            data_g = [[Paragraph("<b>Concepto</b>", cell_bold), Paragraph("<b>Hora</b>", cell_bold), Paragraph("<b>Importe (€)</b>", cell_bold)]]
+            for _, r in gastos_df.iterrows():
+                data_g.append([Paragraph(str(r['concepto']), cell_style), Paragraph(str(r['hora']), cell_style), Paragraph(f"{r['importe']:.2f} €", cell_bold)])
+            data_g.append([Paragraph("<b>TOTAL GASTOS</b>", cell_bold), "", Paragraph(f"<b>{t_gastos:.2f} €</b>", cell_bold)])
+
+            t_gastos_table = Table(data_g, colWidths=[340, 70, 90])
+            t_gastos_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#FEE2E2')),
+                ('GRID', (0, 0), (-1, -2), 0.5, colors.HexColor('#FCA5A5')),
+                ('SPAN', (0, -1), (1, -1)),
+                ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
+                ('PADDING', (0, 0), (-1, -1), 4),
+            ]))
+            story.append(t_gastos_table)
+            story.append(Spacer(1, 12))
+
+        # Resumen de Arqueo
+        story.append(Paragraph("<b>ARQUEO Y DESGLOSE DE EFECTIVO</b>", cell_bold))
+        story.append(Spacer(1, 4))
+
+        t_teorico = t_cobros - t_gastos
+        data_a = [
+            [Paragraph("<b>Total Billetes:</b>", cell_style), Paragraph(f"{t_billetes:.2f} €", cell_style), Paragraph("<b>Total Ventas:</b>", cell_style), Paragraph(f"{t_cobros:.2f} €", cell_style)],
+            [Paragraph("<b>Total Monedas:</b>", cell_style), Paragraph(f"{t_monedas:.2f} €", cell_style), Paragraph("<b>(-) Total Gastos:</b>", cell_style), Paragraph(f"-{t_gastos:.2f} €", cell_style)],
+            [Paragraph("<b>TOTAL EFECTIVO CONTADO:</b>", cell_bold), Paragraph(f"<b>{t_fisico:.2f} €</b>", cell_bold), Paragraph("<b>TOTAL TEÓRICO:</b>", cell_bold), Paragraph(f"<b>{t_teorico:.2f} €</b>", cell_bold)]
+        ]
+
+        t_arqueo_table = Table(data_a, colWidths=[130, 120, 120, 130])
+        t_arqueo_table.setStyle(TableStyle([
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#F8FAFC')),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+            ('ALIGN', (3, 0), (3, -1), 'RIGHT'),
+            ('PADDING', (0, 0), (-1, -1), 5),
+        ]))
+        story.append(t_arqueo_table)
+
+        doc.build(story)
+        buffer.seek(0)
+        return buffer
+
+    if not df_cobros.empty:
+        pdf_bytes = generar_pdf_completo(
+            df_cobros, df_gastos, total_cobros, total_gastos, 
+            total_billetes, total_monedas, total_efectivo_contado, entregado_por
+        )
+        st.download_button(
+            label="📥 Descargar Hoja de Cierre en PDF",
+            data=pdf_bytes,
+            file_name=f"Cierre_Caja_{fecha_hoy}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+    else:
+        st.caption("Registra al menos una venta para poder descargar la hoja en PDF.")
