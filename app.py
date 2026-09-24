@@ -16,30 +16,39 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- CONTROL DE ACCESO MEDIANTE PIN ---
-PIN_CORRECTO = "6666"
+# --- CONFIGURACIÓN DE USUARIOS Y PINS ---
+USUARIOS = {
+    "6666": {"id": "usr1", "nombre": "Mikel"},
+    "8888": {"id": "usr2", "nombre": "Javier"}
+}
 
+# --- CONTROL DE ACCESO MEDIANTE PIN ---
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
+    st.session_state.usuario_actual = None
 
 if not st.session_state.autenticado:
     st.title("☕ Venta Café — Control de Acceso")
-    st.caption("Introduce el PIN de seguridad para acceder a la aplicación.")
+    st.caption("Introduce tu PIN de seguridad para acceder a tu caja.")
     
     with st.form("form_login"):
         pin_input = st.text_input("PIN de Acceso", type="password", placeholder="****")
         btn_login = st.form_submit_button("🔓 Entrar", use_container_width=True)
         
         if btn_login:
-            if pin_input == PIN_CORRECTO:
+            if pin_input in USUARIOS:
                 st.session_state.autenticado = True
-                st.success("Acceso concedido.")
+                st.session_state.usuario_actual = USUARIOS[pin_input]
+                st.success(f"Bienvenido, {USUARIOS[pin_input]['nombre']}")
                 st.rerun()
             else:
                 st.error("PIN incorrecto. Inténtalo de nuevo.")
-    st.stop()  # Detiene la ejecución para que no cargue el resto si no está autenticado
+    st.stop()
 
-# --- BASE DE DATOS LOCAL (SQLite) ---
+user_id = st.session_state.usuario_actual["id"]
+user_nombre = st.session_state.usuario_actual["nombre"]
+
+# --- BASE DE DATOS LOCAL (SQLite Multiusuario) ---
 DB_NAME = "caja_diaria.db"
 
 def init_db():
@@ -48,6 +57,7 @@ def init_db():
     c.execute('''
         CREATE TABLE IF NOT EXISTS cobros (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id TEXT,
             fecha TEXT,
             hora TEXT,
             cliente TEXT,
@@ -58,6 +68,7 @@ def init_db():
     c.execute('''
         CREATE TABLE IF NOT EXISTS gastos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id TEXT,
             fecha TEXT,
             hora TEXT,
             concepto TEXT,
@@ -67,7 +78,9 @@ def init_db():
     c.execute('''
         CREATE TABLE IF NOT EXISTS clientes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT UNIQUE
+            usuario_id TEXT,
+            nombre TEXT,
+            UNIQUE(usuario_id, nombre)
         )
     ''')
     conn.commit()
@@ -75,87 +88,87 @@ def init_db():
 
 init_db()
 
-# --- FUNCIONES DE BASE DE DATOS ---
-def obtener_cobros_hoy(fecha):
+# --- FUNCIONES DE BASE DE DATOS FILTRADAS POR USUARIO ---
+def obtener_cobros_hoy(fecha, u_id):
     conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query("SELECT * FROM cobros WHERE fecha = ?", conn, params=(fecha,))
+    df = pd.read_sql_query("SELECT * FROM cobros WHERE fecha = ? AND usuario_id = ?", conn, params=(fecha, u_id))
     conn.close()
     return df
 
-def guardar_cliente_habitual(nombre_cliente):
+def guardar_cliente_habitual(nombre_cliente, u_id):
     if nombre_cliente and nombre_cliente.strip():
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
-        c.execute("INSERT OR IGNORE INTO clientes (nombre) VALUES (?)", (nombre_cliente.strip(),))
+        c.execute("INSERT OR IGNORE INTO clientes (usuario_id, nombre) VALUES (?, ?)", (u_id, nombre_cliente.strip()))
         conn.commit()
         conn.close()
 
-def obtener_todos_los_clientes():
+def obtener_todos_los_clientes(u_id):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("SELECT id, nombre FROM clientes ORDER BY nombre ASC")
+    c.execute("SELECT id, nombre FROM clientes WHERE usuario_id = ? ORDER BY nombre ASC", (u_id,))
     clientes = c.fetchall()
     conn.close()
     return clientes
 
-def eliminar_cliente_habitual(id_cliente):
+def eliminar_cliente_habitual(id_cliente, u_id):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("DELETE FROM clientes WHERE id = ?", (id_cliente,))
+    c.execute("DELETE FROM clientes WHERE id = ? AND usuario_id = ?", (id_cliente, u_id))
     conn.commit()
     conn.close()
 
-def agregar_cobro(fecha, hora, cliente, albaran, importe):
-    guardar_cliente_habitual(cliente)
+def agregar_cobro(fecha, hora, cliente, albaran, importe, u_id):
+    guardar_cliente_habitual(cliente, u_id)
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("INSERT INTO cobros (fecha, hora, cliente, albaran, importe) VALUES (?, ?, ?, ?, ?)",
-              (fecha, hora, cliente, albaran, importe))
+    c.execute("INSERT INTO cobros (usuario_id, fecha, hora, cliente, albaran, importe) VALUES (?, ?, ?, ?, ?, ?)",
+              (u_id, fecha, hora, cliente, albaran, importe))
     conn.commit()
     conn.close()
 
-def actualizar_cobro(id_cobro, cliente, albaran, importe):
-    guardar_cliente_habitual(cliente)
+def actualizar_cobro(id_cobro, cliente, albaran, importe, u_id):
+    guardar_cliente_habitual(cliente, u_id)
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("UPDATE cobros SET cliente = ?, albaran = ?, importe = ? WHERE id = ?",
-              (cliente, albaran, importe, id_cobro))
+    c.execute("UPDATE cobros SET cliente = ?, albaran = ?, importe = ? WHERE id = ? AND usuario_id = ?",
+              (cliente, albaran, importe, id_cobro, u_id))
     conn.commit()
     conn.close()
 
-def eliminar_cobro(id_cobro):
+def eliminar_cobro(id_cobro, u_id):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("DELETE FROM cobros WHERE id = ?", (id_cobro,))
+    c.execute("DELETE FROM cobros WHERE id = ? AND usuario_id = ?", (id_cobro, u_id))
     conn.commit()
     conn.close()
 
-def obtener_gastos_hoy(fecha):
+def obtener_gastos_hoy(fecha, u_id):
     conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query("SELECT * FROM gastos WHERE fecha = ?", conn, params=(fecha,))
+    df = pd.read_sql_query("SELECT * FROM gastos WHERE fecha = ? AND usuario_id = ?", conn, params=(fecha, u_id))
     conn.close()
     return df
 
-def agregar_gasto(fecha, hora, concepto, importe):
+def agregar_gasto(fecha, hora, concepto, importe, u_id):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("INSERT INTO gastos (fecha, hora, concepto, importe) VALUES (?, ?, ?, ?)",
-              (fecha, hora, concepto, importe))
+    c.execute("INSERT INTO gastos (usuario_id, fecha, hora, concepto, importe) VALUES (?, ?, ?, ?, ?)",
+              (u_id, fecha, hora, concepto, importe))
     conn.commit()
     conn.close()
 
-def eliminar_gasto(id_gasto):
+def eliminar_gasto(id_gasto, u_id):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("DELETE FROM gastos WHERE id = ?", (id_gasto,))
+    c.execute("DELETE FROM gastos WHERE id = ? AND usuario_id = ?", (id_gasto, u_id))
     conn.commit()
     conn.close()
 
-def vaciar_caja_del_dia():
+def vaciar_caja_del_dia(u_id):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("DELETE FROM cobros")
-    c.execute("DELETE FROM gastos")
+    c.execute("DELETE FROM cobros WHERE usuario_id = ?", (u_id,))
+    c.execute("DELETE FROM gastos WHERE usuario_id = ?", (u_id,))
     conn.commit()
     conn.close()
 
@@ -168,25 +181,24 @@ if "edit_id" not in st.session_state:
 
 denominaciones = ["b100", "b50", "b20", "b10", "b5", "m200", "m100", "m050", "m020", "m010", "m005", "m002", "m001"]
 for d in denominaciones:
-    if d not in st.session_state:
-        st.session_state[d] = 0
+    key_d = f"{user_id}_{d}"
+    if key_d not in st.session_state:
+        st.session_state[key_d] = 0
 
-if "persona_entrega" not in st.session_state:
-    st.session_state["persona_entrega"] = ""
-
-# Cabecera principal con botón de cerrar sesión
-col_tit, col_logout = st.columns([4, 1])
+# Cabecera principal con indicador de usuario activo y botón de salir
+col_tit, col_logout = st.columns([3, 1])
 with col_tit:
     st.title("☕ Venta Café — Caja Diaria")
-    st.caption(f"📅 Fecha: {fecha_mostrar}")
+    st.caption(f"📅 Fecha: {fecha_mostrar} | 👤 Usuario: **{user_nombre}**")
 with col_logout:
     if st.button("🔒 Salir"):
         st.session_state.autenticado = False
+        st.session_state.usuario_actual = None
         st.rerun()
 
-df_cobros = obtener_cobros_hoy(fecha_hoy)
-df_gastos = obtener_gastos_hoy(fecha_hoy)
-lista_clientes = obtener_todos_los_clientes()
+df_cobros = obtener_cobros_hoy(fecha_hoy, user_id)
+df_gastos = obtener_gastos_hoy(fecha_hoy, user_id)
+lista_clientes = obtener_todos_los_clientes(user_id)
 nombres_clientes = [c[1] for c in lista_clientes]
 
 # --- PESTAÑAS DE NAVEGACIÓN ---
@@ -241,11 +253,11 @@ with tab_cobros:
         else:
             hora_act = datetime.now().strftime("%H:%M")
             if es_edicion:
-                actualizar_cobro(st.session_state.edit_id, cliente, albaran, importe)
+                actualizar_cobro(st.session_state.edit_id, cliente, albaran, importe, user_id)
                 st.session_state.edit_id = None
                 st.success("✅ Cobro actualizado.")
             else:
-                agregar_cobro(fecha_hoy, hora_act, cliente, albaran, importe)
+                agregar_cobro(fecha_hoy, hora_act, cliente, albaran, importe, user_id)
                 st.success("✅ Cobro registrado.")
             st.rerun()
 
@@ -269,37 +281,36 @@ with tab_cobros:
                         st.rerun()
                 with c2:
                     if st.button("🗑️ Eliminar", key=f"del_c_{row['id']}", use_container_width=True):
-                        eliminar_cobro(row['id'])
+                        eliminar_cobro(row['id'], user_id)
                         st.rerun()
 
     st.divider()
 
-    # --- OPCIONES DE BORRADO DE CLIENTES ---
+    # --- GESTIÓN DE CLIENTES DE ESTE USUARIO ---
     if lista_clientes:
-        with st.expander("👥 Gestionar / Borrar Clientes Habituales"):
-            st.caption("Elimina clientes de la lista desplegable si ya no son necesarios.")
+        with st.expander("👥 Mis Clientes Habituales"):
+            st.caption("Elimina de tu lista habitual los clientes que ya no utilices.")
             for c_id, c_nombre in lista_clientes:
                 col_c1, col_c2 = st.columns([3, 1])
                 with col_c1:
                     st.write(f"• **{c_nombre}**")
                 with col_c2:
                     if st.button("🗑️ Borrar", key=f"del_cli_{c_id}"):
-                        eliminar_cliente_habitual(c_id)
+                        eliminar_cliente_habitual(c_id, user_id)
                         st.rerun()
 
     # --- BOTÓN PARA PONER A CERO LA CAJA ---
-    st.write("### 🔄 Reiniciar Caja")
-    st.caption("Pone a cero los cobros, gastos y el arqueo de billetes/monedas. **Conserva la lista de clientes habituales**.")
+    st.write("### 🔄 Reiniciar Mi Caja")
+    st.caption("Pone a cero tus cobros, gastos y tu arqueo. **No afecta a los datos de otros compañeros**.")
     
-    with st.expander("⚠️ Abrir opciones para poner a cero la caja"):
-        st.warning("¿Estás seguro de que deseas vaciar los datos de la caja actual?")
-        if st.button("🔴 Confirmar y Poner Caja a Cero", use_container_width=True):
-            vaciar_caja_del_dia()
+    with st.expander("⚠️ Abrir opciones para poner a cero mi caja"):
+        st.warning(f"¿Estás seguro de que deseas vaciar la caja actual de {user_nombre}?")
+        if st.button("🔴 Confirmar y Poner Mi Caja a Cero", use_container_width=True):
+            vaciar_caja_del_dia(user_id)
             for d in denominaciones:
-                st.session_state[d] = 0
-            st.session_state["persona_entrega"] = ""
+                st.session_state[f"{user_id}_{d}"] = 0
             st.session_state.edit_id = None
-            st.success("✅ Caja puesta a cero correctamente. Los clientes siguen guardados.")
+            st.success("✅ Tu caja ha sido puesta a cero correctamente.")
             st.rerun()
 
 # ==========================================
@@ -319,7 +330,7 @@ with tab_gastos:
         elif importe_gasto <= 0:
             st.error("El importe debe ser mayor que 0.00 €.")
         else:
-            agregar_gasto(fecha_hoy, datetime.now().strftime("%H:%M"), concepto_gasto.strip(), importe_gasto)
+            agregar_gasto(fecha_hoy, datetime.now().strftime("%H:%M"), concepto_gasto.strip(), importe_gasto, user_id)
             st.success("✅ Gasto registrado.")
             st.rerun()
 
@@ -334,7 +345,7 @@ with tab_gastos:
                 st.write(f"• **{row['concepto']}**: {row['importe']:.2f} € ({row['hora']})")
             with col_g2:
                 if st.button("🗑️", key=f"del_g_{row['id']}"):
-                    eliminar_gasto(row['id'])
+                    eliminar_gasto(row['id'], user_id)
                     st.rerun()
 
 # ==========================================
@@ -347,22 +358,22 @@ with tab_arqueo:
 
     with col_b:
         st.write("#### 💵 Billetes")
-        b100 = st.number_input("Billetes 100€", min_value=0, step=1, key="b100")
-        b50  = st.number_input("Billetes 50€", min_value=0, step=1, key="b50")
-        b20  = st.number_input("Billetes 20€", min_value=0, step=1, key="b20")
-        b10  = st.number_input("Billetes 10€", min_value=0, step=1, key="b10")
-        b5   = st.number_input("Billetes 5€", min_value=0, step=1, key="b5")
+        b100 = st.number_input("Billetes 100€", min_value=0, step=1, key=f"{user_id}_b100")
+        b50  = st.number_input("Billetes 50€", min_value=0, step=1, key=f"{user_id}_b50")
+        b20  = st.number_input("Billetes 20€", min_value=0, step=1, key=f"{user_id}_b20")
+        b10  = st.number_input("Billetes 10€", min_value=0, step=1, key=f"{user_id}_b10")
+        b5   = st.number_input("Billetes 5€", min_value=0, step=1, key=f"{user_id}_b5")
 
     with col_m:
         st.write("#### 🪙 Monedas")
-        m200 = st.number_input("Monedas 2,00€", min_value=0, step=1, key="m200")
-        m100 = st.number_input("Monedas 1,00€", min_value=0, step=1, key="m100")
-        m050 = st.number_input("Monedas 0,50€", min_value=0, step=1, key="m050")
-        m020 = st.number_input("Monedas 0,20€", min_value=0, step=1, key="m020")
-        m010 = st.number_input("Monedas 0,10€", min_value=0, step=1, key="m010")
-        m005 = st.number_input("Monedas 0,05€", min_value=0, step=1, key="m005")
-        m002 = st.number_input("Monedas 0,02€", min_value=0, step=1, key="m002")
-        m001 = st.number_input("Monedas 0,01€", min_value=0, step=1, key="m001")
+        m200 = st.number_input("Monedas 2,00€", min_value=0, step=1, key=f"{user_id}_m200")
+        m100 = st.number_input("Monedas 1,00€", min_value=0, step=1, key=f"{user_id}_m100")
+        m050 = st.number_input("Monedas 0,50€", min_value=0, step=1, key=f"{user_id}_m050")
+        m020 = st.number_input("Monedas 0,20€", min_value=0, step=1, key=f"{user_id}_m020")
+        m010 = st.number_input("Monedas 0,10€", min_value=0, step=1, key=f"{user_id}_m010")
+        m005 = st.number_input("Monedas 0,05€", min_value=0, step=1, key=f"{user_id}_m005")
+        m002 = st.number_input("Monedas 0,02€", min_value=0, step=1, key=f"{user_id}_m002")
+        m001 = st.number_input("Monedas 0,01€", min_value=0, step=1, key=f"{user_id}_m001")
 
     total_billetes = (b100*100) + (b50*50) + (b20*20) + (b10*10) + (b5*5)
     total_monedas = (m200*2.0) + (m100*1.0) + (m050*0.5) + (m020*0.2) + (m010*0.1) + (m005*0.05) + (m002*0.02) + (m001*0.01)
@@ -389,7 +400,7 @@ with tab_arqueo:
 with tab_pdf:
     st.subheader("📄 Generar Hoja de Cierre")
     
-    entregado_por = st.text_input("Persona que entrega:", key="persona_entrega", placeholder="Ej: Nombre del comercial")
+    st.info(f"<b>Entregado por:</b> {user_nombre}", icon="👤")
 
     desglose_efectivo = {
         "b100": (b100, b100 * 100),
@@ -420,8 +431,7 @@ with tab_pdf:
 
         story.append(Paragraph("<b>VENTA CAFÉ — HOJA DE CIERRE DE CAJA</b>", title_style))
         story.append(Spacer(1, 4))
-        nombre_persona = persona.strip() if persona.strip() else "________________________"
-        story.append(Paragraph(f"<b>Fecha:</b> {fecha_mostrar} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Entregado por:</b> {nombre_persona}", sub_style))
+        story.append(Paragraph(f"<b>Fecha:</b> {fecha_mostrar} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Entregado por:</b> {persona}", sub_style))
         story.append(Spacer(1, 10))
 
         story.append(Paragraph("<b>VENTAS CAFÉ (ALBARANES)</b>", cell_bold))
@@ -544,12 +554,12 @@ with tab_pdf:
         pdf_bytes = generar_pdf_completo(
             df_cobros, df_gastos, total_cobros, total_gastos, 
             total_billetes, total_monedas, total_efectivo_contado, 
-            entregado_por, desglose_efectivo
+            user_nombre, desglose_efectivo
         )
         st.download_button(
             label="📥 Descargar Hoja de Cierre en PDF",
             data=pdf_bytes,
-            file_name=f"Cierre_Caja_{fecha_hoy}.pdf",
+            file_name=f"Cierre_Caja_{user_id}_{fecha_hoy}.pdf",
             mime="application/pdf",
             use_container_width=True
         )
