@@ -41,6 +41,13 @@ def init_db():
             importe REAL
         )
     ''')
+    # TABLA SEPARADA PARA CLIENTES (Para que no se borren al vaciar la caja)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS clientes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT UNIQUE
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -53,15 +60,24 @@ def obtener_cobros_hoy(fecha):
     conn.close()
     return df
 
+def guardar_cliente_habitual(nombre_cliente):
+    if nombre_cliente and nombre_cliente.strip():
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("INSERT OR IGNORE INTO clientes (nombre) VALUES (?)", (nombre_cliente.strip(),))
+        conn.commit()
+        conn.close()
+
 def obtener_todos_los_clientes():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("SELECT DISTINCT cliente FROM cobros WHERE cliente IS NOT NULL AND cliente != ''")
+    c.execute("SELECT nombre FROM clientes ORDER BY nombre ASC")
     clientes = [row[0] for row in c.fetchall()]
     conn.close()
-    return sorted(clientes)
+    return clientes
 
 def agregar_cobro(fecha, hora, cliente, albaran, importe):
+    guardar_cliente_habitual(cliente)
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("INSERT INTO cobros (fecha, hora, cliente, albaran, importe) VALUES (?, ?, ?, ?, ?)",
@@ -70,6 +86,7 @@ def agregar_cobro(fecha, hora, cliente, albaran, importe):
     conn.close()
 
 def actualizar_cobro(id_cobro, cliente, albaran, importe):
+    guardar_cliente_habitual(cliente)
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("UPDATE cobros SET cliente = ?, albaran = ?, importe = ? WHERE id = ?",
@@ -110,6 +127,7 @@ def vaciar_caja_del_dia():
     c = conn.cursor()
     c.execute("DELETE FROM cobros")
     c.execute("DELETE FROM gastos")
+    # NOTA: NO borramos la tabla clientes
     conn.commit()
     conn.close()
 
@@ -120,7 +138,6 @@ fecha_mostrar = datetime.now().strftime("%d/%m/%Y")
 if "edit_id" not in st.session_state:
     st.session_state.edit_id = None
 
-# Inicializar contadores de billetes/monedas en session_state para poder resetearlos
 denominaciones = ["b100", "b50", "b20", "b10", "b5", "m200", "m100", "m050", "m020", "m010", "m005", "m002", "m001"]
 for d in denominaciones:
     if d not in st.session_state:
@@ -132,7 +149,6 @@ if "persona_entrega" not in st.session_state:
 st.title("☕ Venta Café — Caja Diaria")
 st.caption(f"📅 Fecha: {fecha_mostrar}")
 
-# Cargar datos persistentes
 df_cobros = obtener_cobros_hoy(fecha_hoy)
 df_gastos = obtener_gastos_hoy(fecha_hoy)
 clientes_historicos = obtener_todos_los_clientes()
@@ -221,8 +237,6 @@ with tab_cobros:
                         st.rerun()
 
     st.divider()
-    
-    # --- BOTÓN PARA PONER A CERO LA CAJA ---
     st.write("### 🔄 Reiniciar Caja")
     st.caption("Pone a cero los cobros, gastos y el arqueo de billetes/monedas. **Conserva la lista de clientes habituales**.")
     
@@ -234,7 +248,7 @@ with tab_cobros:
                 st.session_state[d] = 0
             st.session_state["persona_entrega"] = ""
             st.session_state.edit_id = None
-            st.success("✅ Caja puesta a cero correctamente.")
+            st.success("✅ Caja puesta a cero correctamente. Los clientes siguen guardados.")
             st.rerun()
 
 # ==========================================
@@ -299,7 +313,6 @@ with tab_arqueo:
         m002 = st.number_input("Monedas 0,02€", min_value=0, step=1, key="m002")
         m001 = st.number_input("Monedas 0,01€", min_value=0, step=1, key="m001")
 
-    # Cálculos de arqueo
     total_billetes = (b100*100) + (b50*50) + (b20*20) + (b10*10) + (b5*5)
     total_monedas = (m200*2.0) + (m100*1.0) + (m050*0.5) + (m020*0.2) + (m010*0.1) + (m005*0.05) + (m002*0.02) + (m001*0.01)
     total_efectivo_contado = total_billetes + total_monedas
@@ -327,7 +340,6 @@ with tab_pdf:
     
     entregado_por = st.text_input("Persona que entrega:", key="persona_entrega", placeholder="Ej: Nombre del comercial")
 
-    # Diccionario con el desglose detallado para el PDF
     desglose_efectivo = {
         "b100": (b100, b100 * 100),
         "b50":  (b50,  b50 * 50),
@@ -355,14 +367,12 @@ with tab_pdf:
         cell_style = ParagraphStyle('Cell', parent=styles['Normal'], fontSize=8, leading=10)
         cell_bold = ParagraphStyle('CellB', parent=styles['Normal'], fontSize=8, leading=10, fontName='Helvetica-Bold')
 
-        # Cabecera
         story.append(Paragraph("<b>VENTA CAFÉ — HOJA DE CIERRE DE CAJA</b>", title_style))
         story.append(Spacer(1, 4))
         nombre_persona = persona.strip() if persona.strip() else "________________________"
         story.append(Paragraph(f"<b>Fecha:</b> {fecha_mostrar} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Entregado por:</b> {nombre_persona}", sub_style))
         story.append(Spacer(1, 10))
 
-        # Tabla de Cobros
         story.append(Paragraph("<b>VENTAS CAFÉ (ALBARANES)</b>", cell_bold))
         story.append(Spacer(1, 4))
         
@@ -390,7 +400,6 @@ with tab_pdf:
         story.append(t_cobros_table)
         story.append(Spacer(1, 10))
 
-        # Tabla Gastos si existen
         if not gastos_df.empty:
             story.append(Paragraph("<b>GASTOS / SALIDAS DE CAJA</b>", cell_bold))
             story.append(Spacer(1, 4))
@@ -410,7 +419,6 @@ with tab_pdf:
             story.append(t_gastos_table)
             story.append(Spacer(1, 10))
 
-        # Tabla de Desglose Detallado de Billetes y Monedas
         story.append(Paragraph("<b>DESGLOSE DETALLADO DE EFECTIVO (DESGLOSE CONTABLE)</b>", cell_bold))
         story.append(Spacer(1, 4))
 
@@ -459,10 +467,6 @@ with tab_pdf:
         ]))
         story.append(t_desglose_table)
         story.append(Spacer(1, 10))
-
-        # Cuadro de Resumen Final Teórico vs Contado
-        story.append(Paragraph("<b>RESUMEN Y BALANCE DE CAJA</b>", cell_bold))
-        story.append(Spacer(1, 4))
 
         t_teorico = t_cobros - t_gastos
         data_a = [
