@@ -53,6 +53,14 @@ def obtener_cobros_hoy(fecha):
     conn.close()
     return df
 
+def obtener_todos_los_clientes():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT DISTINCT cliente FROM cobros WHERE cliente IS NOT NULL AND cliente != ''")
+    clientes = [row[0] for row in c.fetchall()]
+    conn.close()
+    return sorted(clientes)
+
 def agregar_cobro(fecha, hora, cliente, albaran, importe):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -97,12 +105,29 @@ def eliminar_gasto(id_gasto):
     conn.commit()
     conn.close()
 
-# --- ESTADO Y VARIABLES ---
+def vaciar_caja_del_dia():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("DELETE FROM cobros")
+    c.execute("DELETE FROM gastos")
+    conn.commit()
+    conn.close()
+
+# --- ESTADO Y VARIABLES DE SESIÓN ---
 fecha_hoy = datetime.now().strftime("%Y-%m-%d")
 fecha_mostrar = datetime.now().strftime("%d/%m/%Y")
 
 if "edit_id" not in st.session_state:
     st.session_state.edit_id = None
+
+# Inicializar contadores de billetes/monedas en session_state para poder resetearlos
+denominaciones = ["b100", "b50", "b20", "b10", "b5", "m200", "m100", "m050", "m020", "m010", "m005", "m002", "m001"]
+for d in denominaciones:
+    if d not in st.session_state:
+        st.session_state[d] = 0
+
+if "persona_entrega" not in st.session_state:
+    st.session_state["persona_entrega"] = ""
 
 st.title("☕ Venta Café — Caja Diaria")
 st.caption(f"📅 Fecha: {fecha_mostrar}")
@@ -110,6 +135,7 @@ st.caption(f"📅 Fecha: {fecha_mostrar}")
 # Cargar datos persistentes
 df_cobros = obtener_cobros_hoy(fecha_hoy)
 df_gastos = obtener_gastos_hoy(fecha_hoy)
+clientes_historicos = obtener_todos_los_clientes()
 
 # --- PESTAÑAS DE NAVEGACIÓN ---
 tab_cobros, tab_gastos, tab_arqueo, tab_pdf = st.tabs(["💰 Cobros", "💸 Gastos", "🧮 Arqueo Billetes", "📄 PDF Cierre"])
@@ -119,8 +145,6 @@ tab_cobros, tab_gastos, tab_arqueo, tab_pdf = st.tabs(["💰 Cobros", "💸 Gast
 # ==========================================
 with tab_cobros:
     st.subheader("📝 Registrar Cobro")
-    
-    clientes_registrados = df_cobros["cliente"].unique().tolist() if not df_cobros.empty else []
     
     es_edicion = st.session_state.edit_id is not None
     row_edit = None
@@ -137,8 +161,8 @@ with tab_cobros:
         st.info(f"✏️ Editando cobro ID #{st.session_state.edit_id}")
 
     with st.form("form_cobro", clear_on_submit=not es_edicion):
-        if clientes_registrados and not es_edicion:
-            cliente_sel = st.selectbox("Cliente habitual", ["-- Nuevo cliente --"] + clientes_registrados)
+        if clientes_historicos and not es_edicion:
+            cliente_sel = st.selectbox("Cliente habitual", ["-- Nuevo cliente --"] + clientes_historicos)
             cliente_inp = st.text_input("Nombre del Cliente (si es nuevo o diferente)", value="")
             cliente = cliente_inp.strip() if cliente_inp.strip() else (cliente_sel if cliente_sel != "-- Nuevo cliente --" else "")
         else:
@@ -195,6 +219,23 @@ with tab_cobros:
                     if st.button("🗑️ Eliminar", key=f"del_c_{row['id']}", use_container_width=True):
                         eliminar_cobro(row['id'])
                         st.rerun()
+
+    st.divider()
+    
+    # --- BOTÓN PARA PONER A CERO LA CAJA ---
+    st.write("### 🔄 Reiniciar Caja")
+    st.caption("Pone a cero los cobros, gastos y el arqueo de billetes/monedas. **Conserva la lista de clientes habituales**.")
+    
+    with st.expander("⚠️ Abrir opciones para poner a cero la caja"):
+        st.warning("¿Estás seguro de que deseas vaciar los datos de la caja actual?")
+        if st.button("🔴 Confirmar y Poner Caja a Cero", use_container_width=True):
+            vaciar_caja_del_dia()
+            for d in denominaciones:
+                st.session_state[d] = 0
+            st.session_state["persona_entrega"] = ""
+            st.session_state.edit_id = None
+            st.success("✅ Caja puesta a cero correctamente.")
+            st.rerun()
 
 # ==========================================
 # PESTAÑA 2: GASTOS DE CAJA
@@ -369,7 +410,7 @@ with tab_pdf:
             story.append(t_gastos_table)
             story.append(Spacer(1, 10))
 
-        # Tabla de Desglose Detallado de Billetes y Monedas (Para Administración)
+        # Tabla de Desglose Detallado de Billetes y Monedas
         story.append(Paragraph("<b>DESGLOSE DETALLADO DE EFECTIVO (DESGLOSE CONTABLE)</b>", cell_bold))
         story.append(Spacer(1, 4))
 
