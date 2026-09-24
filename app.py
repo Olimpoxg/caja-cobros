@@ -54,6 +54,8 @@ DB_NAME = "caja_diaria.db"
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+    
+    # Crear tablas si no existen
     c.execute('''
         CREATE TABLE IF NOT EXISTS cobros (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,6 +85,23 @@ def init_db():
             UNIQUE(usuario_id, nombre)
         )
     ''')
+    
+    # --- MIGRACIÓN AUTOMÁTICA DE TABLAS VIEJAS ---
+    c.execute("PRAGMA table_info(cobros)")
+    columnas_cobros = [col[1] for col in c.fetchall()]
+    if "usuario_id" not in columnas_cobros:
+        c.execute("ALTER TABLE cobros ADD COLUMN usuario_id TEXT DEFAULT 'usr1'")
+
+    c.execute("PRAGMA table_info(gastos)")
+    columnas_gastos = [col[1] for col in c.fetchall()]
+    if "usuario_id" not in columnas_gastos:
+        c.execute("ALTER TABLE gastos ADD COLUMN usuario_id TEXT DEFAULT 'usr1'")
+
+    c.execute("PRAGMA table_info(clientes)")
+    columnas_clientes = [col[1] for col in c.fetchall()]
+    if "usuario_id" not in columnas_clientes:
+        c.execute("ALTER TABLE clientes ADD COLUMN usuario_id TEXT DEFAULT 'usr1'")
+
     conn.commit()
     conn.close()
 
@@ -185,7 +204,7 @@ for d in denominaciones:
     if key_d not in st.session_state:
         st.session_state[key_d] = 0
 
-# Cabecera principal con indicador de usuario activo y botón de salir
+# Cabecera principal
 col_tit, col_logout = st.columns([3, 1])
 with col_tit:
     st.title("☕ Venta Café — Caja Diaria")
@@ -400,7 +419,7 @@ with tab_arqueo:
 with tab_pdf:
     st.subheader("📄 Generar Hoja de Cierre")
     
-    st.info(f"<b>Entregado por:</b> {user_nombre}", icon="👤")
+    st.info(f"**Entregado por:** {user_nombre}", icon="👤")
 
     desglose_efectivo = {
         "b100": (b100, b100 * 100),
