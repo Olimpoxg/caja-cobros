@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
 from datetime import datetime
 import io
+from supabase import create_client, Client
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -16,10 +16,19 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# --- CONEXIÓN A SUPABASE ---
+@st.cache_resource
+def init_supabase() -> Client:
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
+
+supabase = init_supabase()
+
 # --- CONFIGURACIÓN DE USUARIOS Y PINS ---
 USUARIOS = {
     "6666": {"id": "usr1", "nombre": "Mikel"},
-    "8888": {"id": "usr2", "nombre": "Javier"}
+    "8888": {"id": "usr2", "nombre": "Comercial 2"}
 }
 
 # --- CONTROL DE ACCESO MEDIANTE PIN ---
@@ -48,148 +57,79 @@ if not st.session_state.autenticado:
 user_id = st.session_state.usuario_actual["id"]
 user_nombre = st.session_state.usuario_actual["nombre"]
 
-# --- BASE DE DATOS LOCAL (SQLite Multiusuario) ---
-DB_NAME = "caja_diaria.db"
-
-def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    
-    # Crear tablas si no existen
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS cobros (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            usuario_id TEXT,
-            fecha TEXT,
-            hora TEXT,
-            cliente TEXT,
-            albaran TEXT,
-            importe REAL
-        )
-    ''')
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS gastos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            usuario_id TEXT,
-            fecha TEXT,
-            hora TEXT,
-            concepto TEXT,
-            importe REAL
-        )
-    ''')
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS clientes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            usuario_id TEXT,
-            nombre TEXT,
-            UNIQUE(usuario_id, nombre)
-        )
-    ''')
-    
-    # --- MIGRACIÓN AUTOMÁTICA DE TABLAS VIEJAS ---
-    c.execute("PRAGMA table_info(cobros)")
-    columnas_cobros = [col[1] for col in c.fetchall()]
-    if "usuario_id" not in columnas_cobros:
-        c.execute("ALTER TABLE cobros ADD COLUMN usuario_id TEXT DEFAULT 'usr1'")
-
-    c.execute("PRAGMA table_info(gastos)")
-    columnas_gastos = [col[1] for col in c.fetchall()]
-    if "usuario_id" not in columnas_gastos:
-        c.execute("ALTER TABLE gastos ADD COLUMN usuario_id TEXT DEFAULT 'usr1'")
-
-    c.execute("PRAGMA table_info(clientes)")
-    columnas_clientes = [col[1] for col in c.fetchall()]
-    if "usuario_id" not in columnas_clientes:
-        c.execute("ALTER TABLE clientes ADD COLUMN usuario_id TEXT DEFAULT 'usr1'")
-
-    conn.commit()
-    conn.close()
-
-init_db()
-
-# --- FUNCIONES DE BASE DE DATOS FILTRADAS POR USUARIO ---
+# --- FUNCIONES DE BASE DE DATOS (Supabase) ---
 def obtener_cobros_hoy(fecha, u_id):
-    conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query("SELECT * FROM cobros WHERE fecha = ? AND usuario_id = ?", conn, params=(fecha, u_id))
-    conn.close()
-    return df
+    res = supabase.table("cobros").select("*").eq("fecha", fecha).eq("usuario_id", u_id).execute()
+    data = res.data
+    if data:
+        df = pd.DataFrame(data)
+        df["importe"] = df["importe"].astype(float)
+        return df
+    return pd.DataFrame(columns=["id", "usuario_id", "fecha", "hora", "cliente", "albaran", "importe"])
 
 def guardar_cliente_habitual(nombre_cliente, u_id):
     if nombre_cliente and nombre_cliente.strip():
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("INSERT OR IGNORE INTO clientes (usuario_id, nombre) VALUES (?, ?)", (u_id, nombre_cliente.strip()))
-        conn.commit()
-        conn.close()
+        nombre_clean = nombre_cliente.strip()
+        # Verificar si ya existe para evitar duplicados
+        exist = supabase.table("clientes").select("id").eq("usuario_id", u_id).eq("nombre", nombre_clean).execute()
+        if not exist.data:
+            supabase.table("clientes").insert({"usuario_id": u_id, "nombre": nombre_clean}).execute()
 
 def obtener_todos_los_clientes(u_id):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("SELECT id, nombre FROM clientes WHERE usuario_id = ? ORDER BY nombre ASC", (u_id,))
-    clientes = c.fetchall()
-    conn.close()
-    return clientes
+    res = supabase.table("clientes").select("id, nombre").eq("usuario_id", u_id).order("nombre", desc=False).execute()
+    if res.data:
+        return [(r["id"], r["nombre"]) for r in res.data]
+    return []
 
 def eliminar_cliente_habitual(id_cliente, u_id):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("DELETE FROM clientes WHERE id = ? AND usuario_id = ?", (id_cliente, u_id))
-    conn.commit()
-    conn.close()
+    supabase.table("clientes").delete().eq("id", id_cliente).eq("usuario_id", u_id).execute()
 
 def agregar_cobro(fecha, hora, cliente, albaran, importe, u_id):
     guardar_cliente_habitual(cliente, u_id)
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("INSERT INTO cobros (usuario_id, fecha, hora, cliente, albaran, importe) VALUES (?, ?, ?, ?, ?, ?)",
-              (u_id, fecha, hora, cliente, albaran, importe))
-    conn.commit()
-    conn.close()
+    supabase.table("cobros").insert({
+        "usuario_id": u_id,
+        "fecha": fecha,
+        "hora": hora,
+        "cliente": cliente,
+        "albaran": albaran,
+        "importe": float(importe)
+    }).execute()
 
 def actualizar_cobro(id_cobro, cliente, albaran, importe, u_id):
     guardar_cliente_habitual(cliente, u_id)
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE cobros SET cliente = ?, albaran = ?, importe = ? WHERE id = ? AND usuario_id = ?",
-              (cliente, albaran, importe, id_cobro, u_id))
-    conn.commit()
-    conn.close()
+    supabase.table("cobros").update({
+        "cliente": cliente,
+        "albaran": albaran,
+        "importe": float(importe)
+    }).eq("id", id_cobro).eq("usuario_id", u_id).execute()
 
 def eliminar_cobro(id_cobro, u_id):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("DELETE FROM cobros WHERE id = ? AND usuario_id = ?", (id_cobro, u_id))
-    conn.commit()
-    conn.close()
+    supabase.table("cobros").delete().eq("id", id_cobro).eq("usuario_id", u_id).execute()
 
 def obtener_gastos_hoy(fecha, u_id):
-    conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query("SELECT * FROM gastos WHERE fecha = ? AND usuario_id = ?", conn, params=(fecha, u_id))
-    conn.close()
-    return df
+    res = supabase.table("gastos").select("*").eq("fecha", fecha).eq("usuario_id", u_id).execute()
+    data = res.data
+    if data:
+        df = pd.DataFrame(data)
+        df["importe"] = df["importe"].astype(float)
+        return df
+    return pd.DataFrame(columns=["id", "usuario_id", "fecha", "hora", "concepto", "importe"])
 
 def agregar_gasto(fecha, hora, concepto, importe, u_id):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("INSERT INTO gastos (usuario_id, fecha, hora, concepto, importe) VALUES (?, ?, ?, ?, ?)",
-              (u_id, fecha, hora, concepto, importe))
-    conn.commit()
-    conn.close()
+    supabase.table("gastos").insert({
+        "usuario_id": u_id,
+        "fecha": fecha,
+        "hora": hora,
+        "concepto": concepto,
+        "importe": float(importe)
+    }).execute()
 
 def eliminar_gasto(id_gasto, u_id):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("DELETE FROM gastos WHERE id = ? AND usuario_id = ?", (id_gasto, u_id))
-    conn.commit()
-    conn.close()
+    supabase.table("gastos").delete().eq("id", id_gasto).eq("usuario_id", u_id).execute()
 
 def vaciar_caja_del_dia(u_id):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("DELETE FROM cobros WHERE usuario_id = ?", (u_id,))
-    c.execute("DELETE FROM gastos WHERE usuario_id = ?", (u_id,))
-    conn.commit()
-    conn.close()
+    supabase.table("cobros").delete().eq("usuario_id", u_id).execute()
+    supabase.table("gastos").delete().eq("usuario_id", u_id).execute()
 
 # --- ESTADO Y VARIABLES DE SESIÓN ---
 fecha_hoy = datetime.now().strftime("%Y-%m-%d")
@@ -305,7 +245,7 @@ with tab_cobros:
 
     st.divider()
 
-    # --- GESTIÓN DE CLIENTES DE ESTE USUARIO ---
+    # --- GESTIÓN DE CLIENTES ---
     if lista_clientes:
         with st.expander("👥 Mis Clientes Habituales"):
             st.caption("Elimina de tu lista habitual los clientes que ya no utilices.")
@@ -320,7 +260,7 @@ with tab_cobros:
 
     # --- BOTÓN PARA PONER A CERO LA CAJA ---
     st.write("### 🔄 Reiniciar Mi Caja")
-    st.caption("Pone a cero tus cobros, gastos y tu arqueo. **No afecta a los datos de otros compañeros**.")
+    st.caption("Pone a cero tus cobros, gastos y tu arqueo. **No afecta a los datos de otros compañeros ni elimina los clientes**.")
     
     with st.expander("⚠️ Abrir opciones para poner a cero mi caja"):
         st.warning(f"¿Estás seguro de que deseas vaciar la caja actual de {user_nombre}?")
