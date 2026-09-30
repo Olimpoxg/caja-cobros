@@ -126,12 +126,31 @@ def agregar_gasto(fecha, hora, concepto, importe, u_id):
 def eliminar_gasto(id_gasto, u_id):
     supabase.table("gastos").delete().eq("id", id_gasto).eq("usuario_id", u_id).execute()
 
-def cerrar_y_guardar_caja(u_id, t_ventas, t_gastos, t_efectivo, dif, obs):
+# --- FUNCIONES DE ARQUEO Y BORRADOR PERSISTENTE ---
+def obtener_arqueo_guardado(u_id):
+    res = supabase.table("caja_activa").select("*").eq("usuario_id", u_id).execute()
+    if res.data:
+        return res.data[0]
+    return None
+
+def guardar_arqueo_bd(u_id, datos_dict, obs_text):
+    payload = {"usuario_id": u_id, "observaciones": obs_text}
+    payload.update(datos_dict)
+    res = supabase.table("caja_activa").select("usuario_id").eq("usuario_id", u_id).execute()
+    if res.data:
+        supabase.table("caja_activa").update(payload).eq("usuario_id", u_id).execute()
+    else:
+        supabase.table("caja_activa").insert(payload).execute()
+
+def vaciar_arqueo_bd(u_id):
+    supabase.table("caja_activa").delete().eq("usuario_id", u_id).execute()
+
+def cerrar_y_guardar_caja(u_id, t_ventas, t_gastos, t_efectivo, dif, obs, desglose_dict):
     now = datetime.now()
     fecha_c = now.strftime("%d/%m/%Y")
     hora_c = now.strftime("%H:%M")
     
-    supabase.table("cierres").insert({
+    payload = {
         "usuario_id": u_id,
         "fecha_cierre": fecha_c,
         "hora_cierre": hora_c,
@@ -140,10 +159,15 @@ def cerrar_y_guardar_caja(u_id, t_ventas, t_gastos, t_efectivo, dif, obs):
         "total_efectivo": float(t_efectivo),
         "diferencia": float(dif),
         "observaciones": obs
-    }).execute()
-
+    }
+    if desglose_dict:
+        for k, v in desglose_dict.items():
+            payload[k] = int(v[0])
+            
+    supabase.table("cierres").insert(payload).execute()
     supabase.table("cobros").delete().eq("usuario_id", u_id).execute()
     supabase.table("gastos").delete().eq("usuario_id", u_id).execute()
+    vaciar_arqueo_bd(u_id)
 
 def obtener_historial_cierres(u_id):
     res = supabase.table("cierres").select("*").eq("usuario_id", u_id).order("id", desc=True).execute()
@@ -298,7 +322,7 @@ def generar_pdf_a4(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_moned
 
 def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, dif, persona, desglose, obs, fecha_h_custom=None):
     buffer = io.BytesIO()
-    PAGE_WIDTH = 317.0  # Ancho 112mm para Datecs DPP-450
+    PAGE_WIDTH = 317.0
     
     n_cobros = len(cobros_df) if cobros_df is not None and not cobros_df.empty else 1
     n_gastos = len(gastos_df) if gastos_df is not None and not gastos_df.empty else 0
@@ -419,22 +443,25 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
     buffer.seek(0)
     return buffer
 
-# --- ESTADO Y VARIABLES DE SESIÓN ---
-fecha_actual = datetime.now().strftime("%Y-%m-%d")
-fecha_mostrar = datetime.now().strftime("%d/%m/%Y")
-
-if "edit_id" not in st.session_state:
-    st.session_state.edit_id = None
-
+# --- CARGAR ESTADO Y RECUPERAR BORRADOR DE SUPABASE ---
 denominaciones = ["b100", "b50", "b20", "b10", "b5", "m200", "m100", "m050", "m020", "m010", "m005", "m002", "m001"]
-for d in denominaciones:
-    key_d = f"{user_id}_{d}"
-    if key_d not in st.session_state:
-        st.session_state[key_d] = 0
 
-key_obs = f"{user_id}_observaciones"
-if key_obs not in st.session_state:
-    st.session_state[key_obs] = ""
+if "caja_activa_cargada" not in st.session_state:
+    st.session_state.caja_activa_cargada = {}
+
+if user_id not in st.session_state.caja_activa_cargada:
+    bd_arqueo = obtener_arqueo_guardado(user_id)
+    if bd_arqueo:
+        for d in denominaciones:
+            st.session_state[f"{user_id}_{d}"] = int(bd_arqueo.get(d, 0))
+        st.session_state[f"{user_id}_observaciones"] = bd_arqueo.get("observaciones", "") or ""
+    else:
+        for d in denominaciones:
+            if f"{user_id}_{d}" not in st.session_state:
+                st.session_state[f"{user_id}_{d}"] = 0
+        if f"{user_id}_observaciones" not in st.session_state:
+            st.session_state[f"{user_id}_observaciones"] = ""
+    st.session_state.caja_activa_cargada[user_id] = True
 
 # Cabecera
 col_tit, col_logout = st.columns([3, 1])
@@ -635,15 +662,23 @@ with tab_arqueo:
 
     st.divider()
     st.write("### 📝 Observaciones y Guardado de Arqueo")
+    
+    key_obs_name = f"{user_id}_observaciones"
     obs_input = st.text_area(
         "Añade observaciones para este cierre (opcional):",
-        value=st.session_state[key_obs],
+        value=st.session_state.get(key_obs_name, ""),
         placeholder="Ej: Se dejan 50€ en monedas para cambio en el cajetín / Sobrante por propina..."
     )
 
     if st.button("💾 Guardar Arqueo y Observaciones", use_container_width=True):
-        st.session_state[key_obs] = obs_input.strip()
-        st.success("✅ Arqueo y observaciones guardados temporalmente en la caja activa.")
+        st.session_state[key_obs_name] = obs_input.strip()
+        datos_arqueo = {
+            "b100": b100, "b50": b50, "b20": b20, "b10": b10, "b5": b5,
+            "m200": m200, "m100": m100, "m050": m050, "m020": m020,
+            "m010": m010, "m005": m005, "m002": m002, "m001": m001
+        }
+        guardar_arqueo_bd(user_id, datos_arqueo, obs_input.strip())
+        st.success("✅ Arqueo y observaciones guardados permanentemente en la nube.")
 
 # ==========================================
 # PESTAÑA 4: INFORME PDF Y GENERACIÓN TICKET
@@ -653,7 +688,7 @@ with tab_pdf:
     
     st.info(f"**Comercial:** {user_nombre}", icon="👤")
     
-    observaciones = st.session_state[key_obs]
+    observaciones = st.session_state.get(f"{user_id}_observaciones", "")
     if observaciones:
         st.info(f"📌 **Observaciones de la caja:** *{observaciones}*")
 
@@ -708,13 +743,13 @@ with tab_pdf:
         st.write("### 🔴 Finalizar Cierre y Reiniciar Caja")
         st.caption("Guarda este resumen en tu historial permanente y vacía la caja activa para empezar el siguiente turno.")
         
-        with st.expander("⚠️️ Confirmar Cierre Definitivo"):
+        with st.expander("⚠️ Confirmar Cierre Definitivo"):
             st.warning(f"Se guardará el resumen de {total_cobros:.2f} € en tu historial y la caja en curso pasará a cero.")
             if st.button("🔴 Confirmar y Cerrar Caja", use_container_width=True):
-                cerrar_y_guardar_caja(user_id, total_cobros, total_gastos, total_efectivo_contado, diferencia, observaciones)
+                cerrar_y_guardar_caja(user_id, total_cobros, total_gastos, total_efectivo_contado, diferencia, observaciones, desglose_efectivo)
                 for d in denominaciones:
                     st.session_state[f"{user_id}_{d}"] = 0
-                st.session_state[key_obs] = ""
+                st.session_state[f"{user_id}_observaciones"] = ""
                 st.session_state.edit_id = None
                 st.success("✅ Caja cerrada y guardada en el historial correctamente.")
                 st.rerun()
@@ -747,7 +782,24 @@ with tab_historial:
                 if c.get("observaciones"):
                     st.info(f"**Observaciones:** {c['observaciones']}")
 
-                # RE-IMPRESIÓN DE CIERRES ANTERIORES
+                # Recuperar desglose antiguo guardado
+                desglose_hist = {
+                    "b100": (int(c.get("b100") or 0), int(c.get("b100") or 0) * 100),
+                    "b50":  (int(c.get("b50") or 0),  int(c.get("b50") or 0) * 50),
+                    "b20":  (int(c.get("b20") or 0),  int(c.get("b20") or 0) * 20),
+                    "b10":  (int(c.get("b10") or 0),  int(c.get("b10") or 0) * 10),
+                    "b5":   (int(c.get("b5") or 0),   int(c.get("b5") or 0) * 5),
+                    "m200": (int(c.get("m200") or 0), int(c.get("m200") or 0) * 2.0),
+                    "m100": (int(c.get("m100") or 0), int(c.get("m100") or 0) * 1.0),
+                    "m050": (int(c.get("m050") or 0), int(c.get("m050") or 0) * 0.5),
+                    "m020": (int(c.get("m020") or 0), int(c.get("m020") or 0) * 0.2),
+                    "m010": (int(c.get("m010") or 0), int(c.get("m010") or 0) * 0.1),
+                    "m005": (int(c.get("m005") or 0), int(c.get("m005") or 0) * 0.05),
+                    "m002": (int(c.get("m002") or 0), int(c.get("m002") or 0) * 0.02),
+                    "m001": (int(c.get("m001") or 0), int(c.get("m001") or 0) * 0.01)
+                }
+
+                # RE-IMPRESIÓN DE CIERRES ANTERIORES CON DESGLOSE COMPLETO
                 st.write("---")
                 st.write("**Re-imprimir este cierre:**")
                 
@@ -757,7 +809,7 @@ with tab_historial:
                     cobros_df=None, gastos_df=None, 
                     t_cobros=float(c['total_ventas']), t_gastos=float(c['total_gastos']), 
                     t_billetes=0, t_monedas=0, t_fisico=float(c['total_efectivo']), 
-                    dif=dif_val, persona=user_nombre, desglose=None, 
+                    dif=dif_val, persona=user_nombre, desglose=desglose_hist, 
                     obs=c.get("observaciones", ""), fecha_h_custom=fecha_custom
                 )
                 
