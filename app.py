@@ -298,86 +298,12 @@ def generar_pdf_a4(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_moned
 
 def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, dif, persona, desglose, obs, fecha_h_custom=None):
     buffer = io.BytesIO()
-    PAGE_WIDTH = 317.0
-    doc = SimpleDocTemplate(buffer, pagesize=(PAGE_WIDTH, 1000.0), rightMargin=8, leftMargin=8, topMargin=10, bottomMargin=10)
-    story = []
-    styles = getSampleStyleSheet()
-
-    title_style = ParagraphStyle('TTitle', parent=styles['Title'], fontSize=11, leading=13, alignment=1)
-    body_style = ParagraphStyle('TBody', parent=styles['Normal'], fontSize=8, leading=10)
-    bold_style = ParagraphStyle('TBold', parent=styles['Normal'], fontSize=8, leading=10, fontName='Helvetica-Bold')
-
-    fecha_h_gen = fecha_h_custom if fecha_h_custom else datetime.now().strftime("%d/%m/%Y %H:%M")
-
-    story.append(Paragraph("<b>VENTA CAFÉ - CIERRE CAJA</b>", title_style))
-    story.append(Spacer(1, 4))
-    story.append(Paragraph(f"<b>Fecha:</b> {fecha_h_gen}", body_style))
-    story.append(Paragraph(f"<b>Comercial:</b> {persona}", body_style))
-    story.append(Spacer(1, 6))
-
-    if cobros_df is not None and not cobros_df.empty:
-        story.append(Paragraph("<b>COBROS / ALBARANES</b>", bold_style))
-        story.append(Spacer(1, 2))
-        data_c = []
-        for _, r in cobros_df.iterrows():
-            alb = f"#{r['albaran']}" if r['albaran'] else f"#{r['id']}"
-            cli = str(r['cliente'])[:15]
-            data_c.append([
-                Paragraph(alb, body_style),
-                Paragraph(cli, body_style),
-                Paragraph(f"{float(r['importe']):.2f} €", bold_style)
-            ])
-        data_c.append([Paragraph("<b>TOTAL VENTAS</b>", bold_style), "", Paragraph(f"<b>{t_cobros:.2f} €</b>", bold_style)])
-
-        t_cobros_tbl = Table(data_c, colWidths=[55, 170, 75])
-        t_cobros_tbl.setStyle(TableStyle([
-            ('LINEBELOW', (0, -1), (-1, -1), 0.5, colors.black),
-            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
-            ('SPAN', (0, -1), (1, -1)),
-            ('PADDING', (0, 0), (-1, -1), 2),
-        ]))
-        story.append(t_cobros_tbl)
-        story.append(Spacer(1, 6))
-
-    if gastos_df is not None and not gastos_df.empty:
-        story.append(Paragraph("<b>GASTOS DE CAJA</b>", bold_style))
-        story.append(Spacer(1, 2))
-        data_g = []
-        for _, r in gastos_df.iterrows():
-            data_g.append([
-                Paragraph(str(r['concepto'])[:20], body_style),
-                Paragraph(f"{float(r['importe']):.2f} €", bold_style)
-            ])
-        data_g.append([Paragraph("<b>TOTAL GASTOS</b>", bold_style), Paragraph(f"<b>{t_gastos:.2f} €</b>", bold_style)])
-        t_gastos_tbl = Table(data_g, colWidths=[225, 75])
-        t_gastos_tbl.setStyle(TableStyle([
-            ('LINEBELOW', (0, -1), (-1, -1), 0.5, colors.black),
-            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
-            ('PADDING', (0, 0), (-1, -1), 2),
-        ]))
-        story.append(t_gastos_tbl)
-        story.append(Spacer(1, 6))
-
-    if desglose:
-        story.append(Paragraph("<b>DESGLOSE DE EFECTIVO CONTADO</b>", bold_style))
-        story.append(Spacer(1, 2))
-        data_d = []
-        etiquetas = {
-            "b100": "100€", "b50": "50€", "b20": "20€", "b10": "10€", "b5": "5€",
-            "m200": "2,00€", "m100": "1,00€", "m050": "0,50€", "m020": "0,20€",
-            "m010": "0,10€", "m005": "0,05€", "m002": "0,02€", "m001": "0,01€"
-        }
-        
-def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, dif, persona, desglose, obs, fecha_h_custom=None):
-    buffer = io.BytesIO()
-    PAGE_WIDTH = 317.0  # Ancho exacto 112mm para Datecs DPP-450
+    PAGE_WIDTH = 317.0  # Ancho 112mm para Datecs DPP-450
     
-    # Calcular altura estimada según número de filas para evitar que DPP Direct encaje y reduzca
     n_cobros = len(cobros_df) if cobros_df is not None and not cobros_df.empty else 1
     n_gastos = len(gastos_df) if gastos_df is not None and not gastos_df.empty else 0
     n_desglose = sum(1 for v in desglose.values() if v[0] > 0) if desglose else 0
     
-    # Estimación de altura en puntos (base ~250pt + lineas extra)
     estimated_height = 250 + (n_cobros * 18) + (n_gastos * 18) + (n_desglose * 16) + (80 if obs else 0)
     
     doc = SimpleDocTemplate(
@@ -391,7 +317,6 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
     story = []
     styles = getSampleStyleSheet()
 
-    # Tipografías y tamaños más grandes para aprovechar la bobina térmica de 112mm
     title_style = ParagraphStyle('TTitle', parent=styles['Title'], fontSize=14, leading=16, alignment=1)
     body_style = ParagraphStyle('TBody', parent=styles['Normal'], fontSize=10, leading=12)
     bold_style = ParagraphStyle('TBold', parent=styles['Normal'], fontSize=10, leading=12, fontName='Helvetica-Bold')
@@ -494,7 +419,6 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
     buffer.seek(0)
     return buffer
 
-
 # --- ESTADO Y VARIABLES DE SESIÓN ---
 fecha_actual = datetime.now().strftime("%Y-%m-%d")
 fecha_mostrar = datetime.now().strftime("%d/%m/%Y")
@@ -507,6 +431,10 @@ for d in denominaciones:
     key_d = f"{user_id}_{d}"
     if key_d not in st.session_state:
         st.session_state[key_d] = 0
+
+key_obs = f"{user_id}_observaciones"
+if key_obs not in st.session_state:
+    st.session_state[key_obs] = ""
 
 # Cabecera
 col_tit, col_logout = st.columns([3, 1])
@@ -706,13 +634,16 @@ with tab_arqueo:
             st.error(f"❌ **FALTANTE:** {diferencia:.2f} € respecto al teórico ({total_teorico:.2f} €)")
 
     st.divider()
-    # CAMPO DE OBSERVACIONES INTEGRADO EN EL ARQUEO
-    st.write("### 📝 Notas / Observaciones de la Caja")
-    observaciones = st.text_area(
+    st.write("### 📝 Observaciones y Guardado de Arqueo")
+    obs_input = st.text_area(
         "Añade observaciones para este cierre (opcional):",
-        key=f"obs_{user_id}",
+        value=st.session_state[key_obs],
         placeholder="Ej: Se dejan 50€ en monedas para cambio en el cajetín / Sobrante por propina..."
     )
+
+    if st.button("💾 Guardar Arqueo y Observaciones", use_container_width=True):
+        st.session_state[key_obs] = obs_input.strip()
+        st.success("✅ Arqueo y observaciones guardados temporalmente en la caja activa.")
 
 # ==========================================
 # PESTAÑA 4: INFORME PDF Y GENERACIÓN TICKET
@@ -722,8 +653,9 @@ with tab_pdf:
     
     st.info(f"**Comercial:** {user_nombre}", icon="👤")
     
-    if observaciones and observaciones.strip():
-        st.write(f"📌 **Nota de caja agregada:** *{observaciones.strip()}*")
+    observaciones = st.session_state[key_obs]
+    if observaciones:
+        st.info(f"📌 **Observaciones de la caja:** *{observaciones}*")
 
     desglose_efectivo = {
         "b100": (b100, b100 * 100),
@@ -776,12 +708,13 @@ with tab_pdf:
         st.write("### 🔴 Finalizar Cierre y Reiniciar Caja")
         st.caption("Guarda este resumen en tu historial permanente y vacía la caja activa para empezar el siguiente turno.")
         
-        with st.expander("⚠️ Confirmar Cierre Definitivo"):
+        with st.expander("⚠️️ Confirmar Cierre Definitivo"):
             st.warning(f"Se guardará el resumen de {total_cobros:.2f} € en tu historial y la caja en curso pasará a cero.")
             if st.button("🔴 Confirmar y Cerrar Caja", use_container_width=True):
                 cerrar_y_guardar_caja(user_id, total_cobros, total_gastos, total_efectivo_contado, diferencia, observaciones)
                 for d in denominaciones:
                     st.session_state[f"{user_id}_{d}"] = 0
+                st.session_state[key_obs] = ""
                 st.session_state.edit_id = None
                 st.success("✅ Caja cerrada y guardada en el historial correctamente.")
                 st.rerun()
@@ -838,4 +771,3 @@ with tab_historial:
                 )
     else:
         st.info("Aún no has guardado ningún cierre de caja en el historial.")
- 
