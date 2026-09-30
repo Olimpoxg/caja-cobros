@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import pytz
 import io
 from supabase import create_client, Client
 from reportlab.lib.pagesizes import A4
@@ -15,6 +16,13 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed"
 )
+
+# --- ZONA HORARIA DE ESPAÑA ---
+TZ_ESPAÑA = pytz.timezone("Europe/Madrid")
+
+def obtener_tiempo_actual():
+    now_utc = datetime.now(pytz.utc)
+    return now_utc.astimezone(TZ_ESPAÑA)
 
 # --- CONEXIÓN A SUPABASE ---
 @st.cache_resource
@@ -159,9 +167,9 @@ def vaciar_arqueo_bd(u_id):
         pass
 
 def cerrar_y_guardar_caja(u_id, t_ventas, t_gastos, t_efectivo, dif, obs, desglose_dict):
-    now = datetime.now()
-    fecha_c = now.strftime("%d/%m/%Y")
-    hora_c = now.strftime("%H:%M")
+    now_local = obtener_tiempo_actual()
+    fecha_c = now_local.strftime("%d/%m/%Y")
+    hora_c = now_local.strftime("%H:%M")
     
     payload = {
         "usuario_id": u_id,
@@ -198,7 +206,7 @@ def generar_pdf_a4(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_moned
     cell_style = ParagraphStyle('Cell', parent=styles['Normal'], fontSize=8, leading=10)
     cell_bold = ParagraphStyle('CellB', parent=styles['Normal'], fontSize=8, leading=10, fontName='Helvetica-Bold')
 
-    fecha_h_gen = fecha_h_custom if fecha_h_custom else datetime.now().strftime("%d/%m/%Y a las %H:%M")
+    fecha_h_gen = fecha_h_custom if fecha_h_custom else obtener_tiempo_actual().strftime("%d/%m/%Y a las %H:%M")
 
     story.append(Paragraph("<b>VENTA CAFÉ — HOJA DE CIERRE DE CAJA</b>", title_style))
     story.append(Spacer(1, 4))
@@ -340,7 +348,6 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
     n_cobros = len(cobros_df) if cobros_df is not None and not cobros_df.empty else 1
     n_gastos = len(gastos_df) if gastos_df is not None and not gastos_df.empty else 0
     
-    # Preparar listas separadas para Billetes y Monedas con sus subtítulos explícitos
     billetes_list = [
         ("b100", "100€"), ("b50", "50€"), ("b20", "20€"), ("b10", "10€"), ("b5", "5€")
     ]
@@ -361,9 +368,9 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
             if k in desglose and desglose[k][0] > 0:
                 filas_m.append((etiq, desglose[k][0], desglose[k][1]))
                 
-    # Cálculo dinámico de altura estimada del ticket
-    n_desglose_rows = len(filas_b) + len(filas_m) + (1 if filas_b else 0) + (1 if filas_m else 0)
-    estimated_height = 250 + (n_cobros * 16) + (n_gastos * 16) + (n_desglose_rows * 15) + (70 if obs else 0)
+    # Cálculo de filas para altura (incluyendo subtítulos y subtotales intermedios)
+    n_desglose_rows = len(filas_b) + len(filas_m) + (2 if filas_b else 0) + (2 if filas_m else 0)
+    estimated_height = 260 + (n_cobros * 16) + (n_gastos * 16) + (n_desglose_rows * 15) + (70 if obs else 0)
     
     doc = SimpleDocTemplate(
         buffer, 
@@ -376,17 +383,15 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
     story = []
     styles = getSampleStyleSheet()
 
-    # Estilos de texto
     title_style = ParagraphStyle('TTitle', parent=styles['Title'], fontSize=13, leading=15, alignment=1)
     body_style  = ParagraphStyle('TBody', parent=styles['Normal'], fontSize=9, leading=11, alignment=0)
     bold_style  = ParagraphStyle('TBold', parent=styles['Normal'], fontSize=9, leading=11, fontName='Helvetica-Bold', alignment=0)
     sub_seccion = ParagraphStyle('TSubS', parent=styles['Normal'], fontSize=9, leading=11, fontName='Helvetica-Bold', textColor=colors.HexColor('#334155'))
     
-    # Estilos alineados a la derecha
     r_body = ParagraphStyle('RBody', parent=styles['Normal'], fontSize=9, leading=11, alignment=2)
     r_bold = ParagraphStyle('RBold', parent=styles['Normal'], fontSize=9, leading=11, fontName='Helvetica-Bold', alignment=2)
 
-    fecha_h_gen = fecha_h_custom if fecha_h_custom else datetime.now().strftime("%d/%m/%Y %H:%M")
+    fecha_h_gen = fecha_h_custom if fecha_h_custom else obtener_tiempo_actual().strftime("%d/%m/%Y %H:%M")
 
     story.append(Paragraph("<b>VENTA CAFÉ - CIERRE CAJA</b>", title_style))
     story.append(Spacer(1, 5))
@@ -408,11 +413,10 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
             ])
         data_c.append([Paragraph("<b>TOTAL VENTAS</b>", bold_style), "", Paragraph(f"<b>{t_cobros:.2f} €</b>", r_bold)])
 
-        # Ancho ampliado para albarán (65pt) y cliente (185pt) para evitar cortes
+        # Albarán optimizado (65pt) para que `#Cafetera` no salte de línea
         t_cobros_tbl = Table(data_c, colWidths=[65, 185, 59], repeatRows=0)
         t_cobros_tbl.setStyle(TableStyle([
             ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
-            # Línea guía muy suave y elegante entre cada cobro para facilitar la lectura
             ('LINEBELOW', (0, 0), (-1, -2), 0.3, colors.HexColor('#CBD5E1')),
             ('ALIGN', (2, 0), (2, -1), 'RIGHT'),
             ('SPAN', (0, -1), (1, -1)),
@@ -441,12 +445,12 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         story.append(t_gastos_tbl)
         story.append(Spacer(1, 6))
 
-    if n_desglose_rows > 0:
+    if (filas_b or filas_m):
         story.append(Paragraph("<b>DESGLOSE DE EFECTIVO CONTADO</b>", bold_style))
         story.append(Spacer(1, 3))
         data_d = []
         
-        # Bloque Billetes
+        # Bloque Billetes con su subtotal independiente
         if filas_b:
             data_d.append([Paragraph("--- BILLETES ---", sub_seccion), "", ""])
             for etiq, cant, tot in filas_b:
@@ -455,8 +459,9 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
                     Paragraph(f"x{cant}", r_body),
                     Paragraph(f"{tot:.2f} €", r_body)
                 ])
+            data_d.append([Paragraph("<b>Subtotal Billetes</b>", bold_style), "", Paragraph(f"<b>{t_billetes:.2f} €</b>", r_bold)])
                 
-        # Bloque Monedas
+        # Bloque Monedas con su subtotal independiente
         if filas_m:
             data_d.append([Paragraph("--- MONEDAS ---", sub_seccion), "", ""])
             for etiq, cant, tot in filas_m:
@@ -465,7 +470,9 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
                     Paragraph(f"x{cant}", r_body),
                     Paragraph(f"{tot:.2f} €", r_body)
                 ])
+            data_d.append([Paragraph("<b>Subtotal Monedas</b>", bold_style), "", Paragraph(f"<b>{t_monedas:.2f} €</b>", r_bold)])
                 
+        # Total Contado final (Suma de ambos)
         data_d.append([Paragraph("<b>TOTAL CONTADO</b>", bold_style), "", Paragraph(f"<b>{t_fisico:.2f} €</b>", r_bold)])
         
         t_desglose_tbl = Table(data_d, colWidths=[90, 80, 139])
@@ -584,8 +591,9 @@ with tab_cobros:
         elif importe <= 0:
             st.error("El importe debe ser mayor que 0.00 €.")
         else:
-            hora_act = datetime.now().strftime("%H:%M")
-            fecha_act = datetime.now().strftime("%d/%m/%Y")
+            now_local = obtener_tiempo_actual()
+            hora_act = now_local.strftime("%H:%M")
+            fecha_act = now_local.strftime("%d/%m/%Y")
             if es_edicion:
                 actualizar_cobro(st.session_state.edit_id, cliente, albaran, importe, user_id)
                 st.session_state.edit_id = None
@@ -649,8 +657,9 @@ with tab_gastos:
         elif importe_gasto <= 0:
             st.error("El importe debe ser mayor que 0.00 €.")
         else:
-            fecha_act = datetime.now().strftime("%d/%m/%Y")
-            hora_act = datetime.now().strftime("%H:%M")
+            now_local = obtener_tiempo_actual()
+            fecha_act = now_local.strftime("%d/%m/%Y")
+            hora_act = now_local.strftime("%H:%M")
             agregar_gasto(fecha_act, hora_act, concepto_gasto.strip(), importe_gasto, user_id)
             st.success("✅ Gasto registrado.")
             st.rerun()
@@ -878,4 +887,3 @@ with tab_historial:
                 )
     else:
         st.info("Aún no has guardado ningún cierre de caja en el historial.")
- 
