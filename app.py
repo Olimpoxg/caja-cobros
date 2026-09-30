@@ -224,7 +224,7 @@ def generar_pdf_a4(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_moned
                 Paragraph(str(r['albaran']) if r['albaran'] else "-", cell_style),
                 Paragraph(str(r['cliente']), cell_style),
                 Paragraph(fh, cell_style),
-                Paragraph(f"{float(r['importe']):.2f} €", cell_bold)
+                Paragraph(f"{float(r['importe']):.2f} €", cell_style)
             ])
     data_c.append([Paragraph("<b>TOTAL VENTAS</b>", cell_bold), "", "", Paragraph(f"<b>{t_cobros:.2f} €</b>", cell_bold)])
 
@@ -246,7 +246,7 @@ def generar_pdf_a4(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_moned
         data_g = [[Paragraph("<b>Concepto</b>", cell_bold), Paragraph("<b>Fecha/Hora</b>", cell_bold), Paragraph("<b>Importe (€)</b>", cell_bold)]]
         for _, r in gastos_df.iterrows():
             fh_g = f"{r['fecha']} {r['hora']}" if 'fecha' in r else str(r['hora'])
-            data_g.append([Paragraph(str(r['concepto']), cell_style), Paragraph(fh_g, cell_style), Paragraph(f"{float(r['importe']):.2f} €", cell_bold)])
+            data_g.append([Paragraph(str(r['concepto']), cell_style), Paragraph(fh_g, cell_style), Paragraph(f"{float(r['importe']):.2f} €", cell_style)])
         data_g.append([Paragraph("<b>TOTAL GASTOS</b>", cell_bold), "", Paragraph(f"<b>{t_gastos:.2f} €</b>", cell_bold)])
 
         t_gastos_table = Table(data_g, colWidths=[320, 90, 80])
@@ -404,11 +404,13 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         for _, r in cobros_df.iterrows():
             alb = f"#{r['albaran']}" if r['albaran'] else f"#{r['id']}"
             cli = str(r['cliente']).strip()
+            # Los importes individuales de cada albarán van SIN negrita (r_body)
             data_c.append([
                 Paragraph(alb, body_style),
                 Paragraph(cli, body_style),
-                Paragraph(f"{float(r['importe']):.2f} €", r_bold)
+                Paragraph(f"{float(r['importe']):.2f} €", r_body)
             ])
+        # El total de ventas va EN NEGRITA (r_bold)
         data_c.append([Paragraph("<b>TOTAL VENTAS</b>", bold_style), "", Paragraph(f"<b>{t_cobros:.2f} €</b>", r_bold)])
 
         t_cobros_tbl = Table(data_c, colWidths=[65, 185, 59], repeatRows=0)
@@ -429,7 +431,7 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         for _, r in gastos_df.iterrows():
             data_g.append([
                 Paragraph(str(r['concepto']).strip(), body_style),
-                Paragraph(f"{float(r['importe']):.2f} €", r_bold)
+                Paragraph(f"{float(r['importe']):.2f} €", r_body)
             ])
         data_g.append([Paragraph("<b>TOTAL GASTOS</b>", bold_style), Paragraph(f"<b>{t_gastos:.2f} €</b>", r_bold)])
         t_gastos_tbl = Table(data_g, colWidths=[250, 59])
@@ -450,6 +452,7 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         if filas_b:
             data_d.append([Paragraph("--- BILLETES ---", sub_seccion), "", ""])
             for etiq, cant, tot in filas_b:
+                # Los importes individuales de cada billete van SIN negrita (r_body)
                 data_d.append([
                     Paragraph(etiq, body_style),
                     Paragraph(f"x{cant}", r_body),
@@ -460,6 +463,7 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         if filas_m:
             data_d.append([Paragraph("--- MONEDAS ---", sub_seccion), "", ""])
             for etiq, cant, tot in filas_m:
+                # Los importes individuales de cada moneda van SIN negrita (r_body)
                 data_d.append([
                     Paragraph(etiq, body_style),
                     Paragraph(f"x{cant}", r_body),
@@ -881,3 +885,4 @@ with tab_historial:
                 )
     else:
         st.info("Aún no has guardado ningún cierre de caja en el historial.")
+ 
