@@ -368,7 +368,6 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
                 filas_m.append((etiq, desglose[k][0], desglose[k][1]))
                 
     n_desglose_rows = len(filas_b) + len(filas_m) + (2 if filas_b else 0) + (2 if filas_m else 0)
-    # Altura incrementada para alojar el logo de forma holgada
     estimated_height = 320 + (n_cobros * 16) + (n_gastos * 16) + (n_desglose_rows * 15) + (70 if obs else 0)
     
     doc = SimpleDocTemplate(
@@ -389,12 +388,12 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         story.append(logo)
         story.append(Spacer(1, 6))
     except Exception:
-        pass  # Si falta la imagen logo.png, continúa sin romper la app
+        pass
 
     title_style = ParagraphStyle('TTitle', parent=styles['Title'], fontSize=13, leading=15, alignment=1)
     body_style  = ParagraphStyle('TBody', parent=styles['Normal'], fontSize=9, leading=11, alignment=0)
     bold_style  = ParagraphStyle('TBold', parent=styles['Normal'], fontSize=9, leading=11, fontName='Helvetica-Bold', alignment=0)
-    sub_seccion = ParagraphStyle('TSubS', parent=styles['Normal'], fontSize=9, leading=11, fontName='Helvetica-Bold', textColor=colors.HexColor('#334155'))
+    sub_seccion = ParagraphStyle('TSubS', parent=styles['Normal'], fontSize=9, leading=11, fontName='Helvetica-Bold', textColor=colors.black)
     
     r_body = ParagraphStyle('RBody', parent=styles['Normal'], fontSize=9, leading=11, alignment=2)
     r_bold = ParagraphStyle('RBold', parent=styles['Normal'], fontSize=9, leading=11, fontName='Helvetica-Bold', alignment=2)
@@ -424,7 +423,8 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         t_cobros_tbl = Table(data_c, colWidths=[65, 185, 59], repeatRows=0)
         t_cobros_tbl.setStyle(TableStyle([
             ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
-            ('LINEBELOW', (0, 0), (-1, -2), 0.3, colors.HexColor('#CBD5E1')),
+            # Línea de separación negra sólida y de 0.6 para que la térmica la dibuje perfectamente
+            ('LINEBELOW', (0, 0), (-1, -2), 0.6, colors.black),
             ('ALIGN', (2, 0), (2, -1), 'RIGHT'),
             ('SPAN', (0, -1), (1, -1)),
             ('PADDING', (0, 0), (-1, -1), 2.5),
@@ -445,7 +445,7 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         t_gastos_tbl = Table(data_g, colWidths=[250, 59])
         t_gastos_tbl.setStyle(TableStyle([
             ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
-            ('LINEBELOW', (0, 0), (-1, -2), 0.3, colors.HexColor('#CBD5E1')),
+            ('LINEBELOW', (0, 0), (-1, -2), 0.6, colors.black),
             ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
             ('PADDING', (0, 0), (-1, -1), 2.5),
         ]))
@@ -482,7 +482,7 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         t_desglose_tbl = Table(data_d, colWidths=[90, 80, 139])
         t_desglose_tbl.setStyle(TableStyle([
             ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
-            ('LINEBELOW', (0, 0), (-1, -2), 0.2, colors.HexColor('#E2E8F0')),
+            ('LINEBELOW', (0, 0), (-1, -2), 0.4, colors.black),
             ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
             ('SPAN', (0, -1), (1, -1)),
             ('PADDING', (0, 0), (-1, -1), 2),
@@ -640,7 +640,7 @@ with tab_cobros:
                 with col_c1:
                     st.write(f"• **{c_nombre}**")
                 with col_c2:
-                    if st.button("🗑️️ Borrar", key=f"del_cli_{c_id}"):
+                    if st.button("🗑️ Borrar", key=f"del_cli_{c_id}"):
                         eliminar_cliente_habitual(c_id, user_id)
                         st.rerun()
 
