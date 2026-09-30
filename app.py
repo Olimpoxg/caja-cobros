@@ -131,7 +131,6 @@ def cerrar_y_guardar_caja(u_id, t_ventas, t_gastos, t_efectivo, dif, obs):
     fecha_c = now.strftime("%d/%m/%Y")
     hora_c = now.strftime("%H:%M")
     
-    # Guardar en el historial de cierres
     supabase.table("cierres").insert({
         "usuario_id": u_id,
         "fecha_cierre": fecha_c,
@@ -143,7 +142,6 @@ def cerrar_y_guardar_caja(u_id, t_ventas, t_gastos, t_efectivo, dif, obs):
         "observaciones": obs
     }).execute()
 
-    # Vaciar datos de la caja activa
     supabase.table("cobros").delete().eq("usuario_id", u_id).execute()
     supabase.table("gastos").delete().eq("usuario_id", u_id).execute()
 
@@ -181,7 +179,7 @@ lista_clientes = obtener_todos_los_clientes(user_id)
 nombres_clientes = [c[1] for c in lista_clientes]
 
 # --- PESTAÑAS DE NAVEGACIÓN ---
-tab_cobros, tab_gastos, tab_arqueo, tab_pdf, tab_historial = st.tabs(["💰 Cobros", "💸 Gastos", "🧮 Arqueo", "📄 PDF Cierre", "📜 Historial Cierres"])
+tab_cobros, tab_gastos, tab_arqueo, tab_pdf, tab_historial = st.tabs(["💰 Cobros", "💸 Gastos", "🧮 Arqueo", "📄 PDF / Cierre", "📜 Historial"])
 
 # ==========================================
 # PESTAÑA 1: COBROS (VENTAS CAFÉ)
@@ -362,10 +360,10 @@ with tab_arqueo:
             st.error(f"❌ **FALTANTE:** {diferencia:.2f} € respecto al teórico ({total_teorico:.2f} €)")
 
 # ==========================================
-# PESTAÑA 4: INFORME PDF Y CIERRE
+# PESTAÑA 4: INFORME PDF Y GENERACIÓN TICKET
 # ==========================================
 with tab_pdf:
-    st.subheader("📄 Generar Hoja de Cierre y Finalizar Caja")
+    st.subheader("📄 Generar Hoja de Cierre / Ticket")
     
     st.info(f"**Comercial:** {user_nombre}", icon="👤")
     
@@ -387,7 +385,8 @@ with tab_pdf:
         "m001": (m001, m001 * 0.01)
     }
 
-    def generar_pdf_completo(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, dif, persona, desglose, obs):
+    # --- GENERADOR DE PDF (A4 STANDAR) ---
+    def generar_pdf_a4(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, dif, persona, desglose, obs):
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
         story = []
@@ -532,16 +531,140 @@ with tab_pdf:
         buffer.seek(0)
         return buffer
 
+    # --- GENERADOR DE PDF PARA TICKET TÉRMICO (DATECS DPP-450: ANCHO 112MM) ---
+    def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, dif, persona, desglose, obs):
+        buffer = io.BytesIO()
+        # Ancho 112mm (317 puntos) y alto dinámico
+        PAGE_WIDTH = 317.0
+        doc = SimpleDocTemplate(buffer, pagesize=(PAGE_WIDTH, 1000.0), rightMargin=8, leftMargin=8, topMargin=10, bottomMargin=10)
+        story = []
+        styles = getSampleStyleSheet()
+
+        title_style = ParagraphStyle('TTitle', parent=styles['Title'], fontSize=11, leading=13, alignment=1)
+        body_style = ParagraphStyle('TBody', parent=styles['Normal'], fontSize=8, leading=10)
+        bold_style = ParagraphStyle('TBold', parent=styles['Normal'], fontSize=8, leading=10, fontName='Helvetica-Bold')
+
+        fecha_h_gen = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+        story.append(Paragraph("<b>VENTA CAFÉ - CIERRE CAJA</b>", title_style))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(f"<b>Fecha:</b> {fecha_h_gen}", body_style))
+        story.append(Paragraph(f"<b>Comercial:</b> {persona}", body_style))
+        story.append(Spacer(1, 6))
+
+        story.append(Paragraph("<b>COBROS / ALBARANES</b>", bold_style))
+        story.append(Spacer(1, 2))
+
+        data_c = []
+        if not cobros_df.empty:
+            for _, r in cobros_df.iterrows():
+                alb = f"#{r['albaran']}" if r['albaran'] else f"#{r['id']}"
+                cli = str(r['cliente'])[:15]
+                data_c.append([
+                    Paragraph(alb, body_style),
+                    Paragraph(cli, body_style),
+                    Paragraph(f"{float(r['importe']):.2f} €", bold_style)
+                ])
+        data_c.append([Paragraph("<b>TOTAL VENTAS</b>", bold_style), "", Paragraph(f"<b>{t_cobros:.2f} €</b>", bold_style)])
+
+        t_cobros_tbl = Table(data_c, colWidths=[55, 170, 75])
+        t_cobros_tbl.setStyle(TableStyle([
+            ('LINEBELOW', (0, -1), (-1, -1), 0.5, colors.black),
+            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
+            ('SPAN', (0, -1), (1, -1)),
+            ('PADDING', (0, 0), (-1, -1), 2),
+        ]))
+        story.append(t_cobros_tbl)
+        story.append(Spacer(1, 6))
+
+        if not gastos_df.empty:
+            story.append(Paragraph("<b>GASTOS DE CAJA</b>", bold_style))
+            story.append(Spacer(1, 2))
+            data_g = []
+            for _, r in gastos_df.iterrows():
+                data_g.append([
+                    Paragraph(str(r['concepto'])[:20], body_style),
+                    Paragraph(f"{float(r['importe']):.2f} €", bold_style)
+                ])
+            data_g.append([Paragraph("<b>TOTAL GASTOS</b>", bold_style), Paragraph(f"<b>{t_gastos:.2f} €</b>", bold_style)])
+            t_gastos_tbl = Table(data_g, colWidths=[225, 75])
+            t_gastos_tbl.setStyle(TableStyle([
+                ('LINEBELOW', (0, -1), (-1, -1), 0.5, colors.black),
+                ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
+                ('PADDING', (0, 0), (-1, -1), 2),
+            ]))
+            story.append(t_gastos_tbl)
+            story.append(Spacer(1, 6))
+
+        story.append(Paragraph("<b>DESGLOSE DE EFECTIVO CONTADO</b>", bold_style))
+        story.append(Spacer(1, 2))
+        data_d = []
+        etiquetas = {
+            "b100": "100€", "b50": "50€", "b20": "20€", "b10": "10€", "b5": "5€",
+            "m200": "2,00€", "m100": "1,00€", "m050": "0,50€", "m020": "0,20€",
+            "m010": "0,10€", "m005": "0,05€", "m002": "0,02€", "m001": "0,01€"
+        }
+        for k, v in desglose.items():
+            cant, tot = v
+            if cant > 0:
+                data_d.append([
+                    Paragraph(etiquetas[k], body_style),
+                    Paragraph(f"x{cant}", body_style),
+                    Paragraph(f"{tot:.2f} €", body_style)
+                ])
+        data_d.append([Paragraph("<b>TOTAL CONTADO</b>", bold_style), "", Paragraph(f"<b>{t_fisico:.2f} €</b>", bold_style)])
+        
+        t_desglose_tbl = Table(data_d, colWidths=[100, 50, 150])
+        t_desglose_tbl.setStyle(TableStyle([
+            ('LINEBELOW', (0, -1), (-1, -1), 0.5, colors.black),
+            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
+            ('SPAN', (0, -1), (1, -1)),
+            ('PADDING', (0, 0), (-1, -1), 2),
+        ]))
+        story.append(t_desglose_tbl)
+        story.append(Spacer(1, 6))
+
+        t_teorico = t_cobros - t_gastos
+        texto_dif = f"+{dif:.2f} € (Sobrante)" if dif > 0 else (f"{dif:.2f} € (Faltante)" if dif < 0 else "0.00 € (OK)")
+        
+        story.append(Paragraph(f"<b>Total Teórico:</b> {t_teorico:.2f} €", body_style))
+        story.append(Paragraph(f"<b>Diferencia:</b> {texto_dif}", bold_style))
+
+        if obs and obs.strip():
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(f"<b>Obs:</b> {obs.strip()}", body_style))
+
+        doc.build(story)
+        buffer.seek(0)
+        return buffer
+
     if not df_cobros.empty:
-        pdf_bytes = generar_pdf_completo(
+        # Opción 1: Generar PDF para Ticketera Datecs
+        pdf_ticket_bytes = generar_pdf_ticket_termico(
             df_cobros, df_gastos, total_cobros, total_gastos, 
             total_billetes, total_monedas, total_efectivo_contado, diferencia,
             user_nombre, desglose_efectivo, observaciones
         )
         st.download_button(
-            label="📥 Descargar Hoja de Cierre en PDF",
-            data=pdf_bytes,
-            file_name=f"Cierre_Caja_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+            label="🖨️ Imprimir Ticket Cierre (Para Datecs DPP-450)",
+            data=pdf_ticket_bytes,
+            file_name=f"Ticket_Datecs_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+
+        st.write("---")
+
+        # Opción 2: Generar PDF A4 estándar
+        pdf_a4_bytes = generar_pdf_a4(
+            df_cobros, df_gastos, total_cobros, total_gastos, 
+            total_billetes, total_monedas, total_efectivo_contado, diferencia,
+            user_nombre, desglose_efectivo, observaciones
+        )
+        st.download_button(
+            label="📄 Descargar Hoja Cierre A4 (Para Email / Oficina)",
+            data=pdf_a4_bytes,
+            file_name=f"Cierre_Caja_A4_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
             mime="application/pdf",
             use_container_width=True
         )
