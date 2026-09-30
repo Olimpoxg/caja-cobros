@@ -6,7 +6,7 @@ import io
 from supabase import create_client, Client
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -368,7 +368,8 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
                 filas_m.append((etiq, desglose[k][0], desglose[k][1]))
                 
     n_desglose_rows = len(filas_b) + len(filas_m) + (2 if filas_b else 0) + (2 if filas_m else 0)
-    estimated_height = 260 + (n_cobros * 16) + (n_gastos * 16) + (n_desglose_rows * 15) + (70 if obs else 0)
+    # Altura incrementada para alojar el logo de forma holgada
+    estimated_height = 320 + (n_cobros * 16) + (n_gastos * 16) + (n_desglose_rows * 15) + (70 if obs else 0)
     
     doc = SimpleDocTemplate(
         buffer, 
@@ -380,6 +381,15 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
     )
     story = []
     styles = getSampleStyleSheet()
+
+    # --- INSERCIÓN DEL LOGO CORPORATIVO ---
+    try:
+        logo = Image("logo.png", width=140, height=56)
+        logo.hAlign = 'CENTER'
+        story.append(logo)
+        story.append(Spacer(1, 6))
+    except Exception:
+        pass  # Si falta la imagen logo.png, continúa sin romper la app
 
     title_style = ParagraphStyle('TTitle', parent=styles['Title'], fontSize=13, leading=15, alignment=1)
     body_style  = ParagraphStyle('TBody', parent=styles['Normal'], fontSize=9, leading=11, alignment=0)
@@ -404,13 +414,11 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         for _, r in cobros_df.iterrows():
             alb = f"#{r['albaran']}" if r['albaran'] else f"#{r['id']}"
             cli = str(r['cliente']).strip()
-            # Los importes individuales de cada albarán van SIN negrita (r_body)
             data_c.append([
                 Paragraph(alb, body_style),
                 Paragraph(cli, body_style),
                 Paragraph(f"{float(r['importe']):.2f} €", r_body)
             ])
-        # El total de ventas va EN NEGRITA (r_bold)
         data_c.append([Paragraph("<b>TOTAL VENTAS</b>", bold_style), "", Paragraph(f"<b>{t_cobros:.2f} €</b>", r_bold)])
 
         t_cobros_tbl = Table(data_c, colWidths=[65, 185, 59], repeatRows=0)
@@ -452,7 +460,6 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         if filas_b:
             data_d.append([Paragraph("--- BILLETES ---", sub_seccion), "", ""])
             for etiq, cant, tot in filas_b:
-                # Los importes individuales de cada billete van SIN negrita (r_body)
                 data_d.append([
                     Paragraph(etiq, body_style),
                     Paragraph(f"x{cant}", r_body),
@@ -463,7 +470,6 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         if filas_m:
             data_d.append([Paragraph("--- MONEDAS ---", sub_seccion), "", ""])
             for etiq, cant, tot in filas_m:
-                # Los importes individuales de cada moneda van SIN negrita (r_body)
                 data_d.append([
                     Paragraph(etiq, body_style),
                     Paragraph(f"x{cant}", r_body),
@@ -634,7 +640,7 @@ with tab_cobros:
                 with col_c1:
                     st.write(f"• **{c_nombre}**")
                 with col_c2:
-                    if st.button("🗑️ Borrar", key=f"del_cli_{c_id}"):
+                    if st.button("🗑️️ Borrar", key=f"del_cli_{c_id}"):
                         eliminar_cliente_habitual(c_id, user_id)
                         st.rerun()
 
@@ -885,4 +891,3 @@ with tab_historial:
                 )
     else:
         st.info("Aún no has guardado ningún cierre de caja en el historial.")
- 
