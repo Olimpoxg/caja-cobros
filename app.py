@@ -367,6 +367,95 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
             "m200": "2,00€", "m100": "1,00€", "m050": "0,50€", "m020": "0,20€",
             "m010": "0,10€", "m005": "0,05€", "m002": "0,02€", "m001": "0,01€"
         }
+        
+def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, dif, persona, desglose, obs, fecha_h_custom=None):
+    buffer = io.BytesIO()
+    PAGE_WIDTH = 317.0  # Ancho exacto 112mm para Datecs DPP-450
+    
+    # Calcular altura estimada según número de filas para evitar que DPP Direct encaje y reduzca
+    n_cobros = len(cobros_df) if cobros_df is not None and not cobros_df.empty else 1
+    n_gastos = len(gastos_df) if gastos_df is not None and not gastos_df.empty else 0
+    n_desglose = sum(1 for v in desglose.values() if v[0] > 0) if desglose else 0
+    
+    # Estimación de altura en puntos (base ~250pt + lineas extra)
+    estimated_height = 250 + (n_cobros * 18) + (n_gastos * 18) + (n_desglose * 16) + (80 if obs else 0)
+    
+    doc = SimpleDocTemplate(
+        buffer, 
+        pagesize=(PAGE_WIDTH, float(estimated_height)), 
+        rightMargin=10, 
+        leftMargin=10, 
+        topMargin=12, 
+        bottomMargin=12
+    )
+    story = []
+    styles = getSampleStyleSheet()
+
+    # Tipografías y tamaños más grandes para aprovechar la bobina térmica de 112mm
+    title_style = ParagraphStyle('TTitle', parent=styles['Title'], fontSize=14, leading=16, alignment=1)
+    body_style = ParagraphStyle('TBody', parent=styles['Normal'], fontSize=10, leading=12)
+    bold_style = ParagraphStyle('TBold', parent=styles['Normal'], fontSize=10, leading=12, fontName='Helvetica-Bold')
+
+    fecha_h_gen = fecha_h_custom if fecha_h_custom else datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    story.append(Paragraph("<b>VENTA CAFÉ - CIERRE CAJA</b>", title_style))
+    story.append(Spacer(1, 6))
+    story.append(Paragraph(f"<b>Fecha:</b> {fecha_h_gen}", body_style))
+    story.append(Paragraph(f"<b>Comercial:</b> {persona}", body_style))
+    story.append(Spacer(1, 8))
+
+    if cobros_df is not None and not cobros_df.empty:
+        story.append(Paragraph("<b>COBROS / ALBARANES</b>", bold_style))
+        story.append(Spacer(1, 3))
+        data_c = []
+        for _, r in cobros_df.iterrows():
+            alb = f"#{r['albaran']}" if r['albaran'] else f"#{r['id']}"
+            cli = str(r['cliente'])[:14]
+            data_c.append([
+                Paragraph(alb, body_style),
+                Paragraph(cli, body_style),
+                Paragraph(f"{float(r['importe']):.2f} €", bold_style)
+            ])
+        data_c.append([Paragraph("<b>TOTAL VENTAS</b>", bold_style), "", Paragraph(f"<b>{t_cobros:.2f} €</b>", bold_style)])
+
+        t_cobros_tbl = Table(data_c, colWidths=[65, 150, 82])
+        t_cobros_tbl.setStyle(TableStyle([
+            ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
+            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
+            ('SPAN', (0, -1), (1, -1)),
+            ('PADDING', (0, 0), (-1, -1), 3),
+        ]))
+        story.append(t_cobros_tbl)
+        story.append(Spacer(1, 8))
+
+    if gastos_df is not None and not gastos_df.empty:
+        story.append(Paragraph("<b>GASTOS DE CAJA</b>", bold_style))
+        story.append(Spacer(1, 3))
+        data_g = []
+        for _, r in gastos_df.iterrows():
+            data_g.append([
+                Paragraph(str(r['concepto'])[:18], body_style),
+                Paragraph(f"{float(r['importe']):.2f} €", bold_style)
+            ])
+        data_g.append([Paragraph("<b>TOTAL GASTOS</b>", bold_style), Paragraph(f"<b>{t_gastos:.2f} €</b>", bold_style)])
+        t_gastos_tbl = Table(data_g, colWidths=[215, 82])
+        t_gastos_tbl.setStyle(TableStyle([
+            ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
+            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
+            ('PADDING', (0, 0), (-1, -1), 3),
+        ]))
+        story.append(t_gastos_tbl)
+        story.append(Spacer(1, 8))
+
+    if desglose:
+        story.append(Paragraph("<b>DESGLOSE DE EFECTIVO CONTADO</b>", bold_style))
+        story.append(Spacer(1, 3))
+        data_d = []
+        etiquetas = {
+            "b100": "100€", "b50": "50€", "b20": "20€", "b10": "10€", "b5": "5€",
+            "m200": "2,00€", "m100": "1,00€", "m050": "0,50€", "m020": "0,20€",
+            "m010": "0,10€", "m005": "0,05€", "m002": "0,02€", "m001": "0,01€"
+        }
         for k, v in desglose.items():
             cant, tot = v
             if cant > 0:
@@ -377,15 +466,15 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
                 ])
         data_d.append([Paragraph("<b>TOTAL CONTADO</b>", bold_style), "", Paragraph(f"<b>{t_fisico:.2f} €</b>", bold_style)])
         
-        t_desglose_tbl = Table(data_d, colWidths=[100, 50, 150])
+        t_desglose_tbl = Table(data_d, colWidths=[110, 50, 137])
         t_desglose_tbl.setStyle(TableStyle([
-            ('LINEBELOW', (0, -1), (-1, -1), 0.5, colors.black),
+            ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
             ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
             ('SPAN', (0, -1), (1, -1)),
-            ('PADDING', (0, 0), (-1, -1), 2),
+            ('PADDING', (0, 0), (-1, -1), 3),
         ]))
         story.append(t_desglose_tbl)
-        story.append(Spacer(1, 6))
+        story.append(Spacer(1, 8))
 
     t_teorico = t_cobros - t_gastos
     texto_dif = f"+{dif:.2f} € (Sobrante)" if dif > 0 else (f"{dif:.2f} € (Faltante)" if dif < 0 else "0.00 € (OK)")
@@ -394,15 +483,17 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
     story.append(Paragraph(f"<b>Total Gastos:</b> {t_gastos:.2f} €", body_style))
     story.append(Paragraph(f"<b>Total Teórico:</b> {t_teorico:.2f} €", body_style))
     story.append(Paragraph(f"<b>Efectivo Contado:</b> {t_fisico:.2f} €", body_style))
+    story.append(Spacer(1, 2))
     story.append(Paragraph(f"<b>Diferencia:</b> {texto_dif}", bold_style))
 
     if obs and obs.strip():
-        story.append(Spacer(1, 4))
+        story.append(Spacer(1, 6))
         story.append(Paragraph(f"<b>Obs:</b> {obs.strip()}", body_style))
 
     doc.build(story)
     buffer.seek(0)
     return buffer
+
 
 # --- ESTADO Y VARIABLES DE SESIÓN ---
 fecha_actual = datetime.now().strftime("%Y-%m-%d")
