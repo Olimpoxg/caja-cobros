@@ -149,6 +149,261 @@ def obtener_historial_cierres(u_id):
     res = supabase.table("cierres").select("*").eq("usuario_id", u_id).order("id", desc=True).execute()
     return res.data if res.data else []
 
+# --- GENERADORES DE PDF ---
+def generar_pdf_a4(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, dif, persona, desglose, obs, fecha_h_custom=None):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    story = []
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle('DocTitle', parent=styles['Title'], fontSize=15, leading=18, textColor=colors.HexColor('#1E293B'), alignment=0)
+    sub_style = ParagraphStyle('DocSub', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#475569'))
+    cell_style = ParagraphStyle('Cell', parent=styles['Normal'], fontSize=8, leading=10)
+    cell_bold = ParagraphStyle('CellB', parent=styles['Normal'], fontSize=8, leading=10, fontName='Helvetica-Bold')
+
+    fecha_h_gen = fecha_h_custom if fecha_h_custom else datetime.now().strftime("%d/%m/%Y a las %H:%M")
+
+    story.append(Paragraph("<b>VENTA CAFÉ — HOJA DE CIERRE DE CAJA</b>", title_style))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph(f"<b>Fecha/Hora Cierre:</b> {fecha_h_gen} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Entregado por:</b> {persona}", sub_style))
+    story.append(Spacer(1, 10))
+
+    story.append(Paragraph("<b>VENTAS CAFÉ (ALBARANES)</b>", cell_bold))
+    story.append(Spacer(1, 4))
+    
+    data_c = [[Paragraph("<b>Nº Albarán</b>", cell_bold), Paragraph("<b>Cliente</b>", cell_bold), Paragraph("<b>Fecha/Hora</b>", cell_bold), Paragraph("<b>Importe (€)</b>", cell_bold)]]
+    
+    if cobros_df is not None and not cobros_df.empty:
+        for _, r in cobros_df.iterrows():
+            fh = f"{r['fecha']} {r['hora']}" if 'fecha' in r else str(r['hora'])
+            data_c.append([
+                Paragraph(str(r['albaran']) if r['albaran'] else "-", cell_style),
+                Paragraph(str(r['cliente']), cell_style),
+                Paragraph(fh, cell_style),
+                Paragraph(f"{float(r['importe']):.2f} €", cell_bold)
+            ])
+    data_c.append([Paragraph("<b>TOTAL VENTAS</b>", cell_bold), "", "", Paragraph(f"<b>{t_cobros:.2f} €</b>", cell_bold)])
+
+    t_cobros_table = Table(data_c, colWidths=[80, 230, 90, 90])
+    t_cobros_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E2E8F0')),
+        ('GRID', (0, 0), (-1, -2), 0.5, colors.HexColor('#CBD5E1')),
+        ('SPAN', (0, -1), (2, -1)),
+        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#F1F5F9')),
+        ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
+        ('PADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.append(t_cobros_table)
+    story.append(Spacer(1, 10))
+
+    if gastos_df is not None and not gastos_df.empty:
+        story.append(Paragraph("<b>GASTOS / SALIDAS DE CAJA</b>", cell_bold))
+        story.append(Spacer(1, 4))
+        data_g = [[Paragraph("<b>Concepto</b>", cell_bold), Paragraph("<b>Fecha/Hora</b>", cell_bold), Paragraph("<b>Importe (€)</b>", cell_bold)]]
+        for _, r in gastos_df.iterrows():
+            fh_g = f"{r['fecha']} {r['hora']}" if 'fecha' in r else str(r['hora'])
+            data_g.append([Paragraph(str(r['concepto']), cell_style), Paragraph(fh_g, cell_style), Paragraph(f"{float(r['importe']):.2f} €", cell_bold)])
+        data_g.append([Paragraph("<b>TOTAL GASTOS</b>", cell_bold), "", Paragraph(f"<b>{t_gastos:.2f} €</b>", cell_bold)])
+
+        t_gastos_table = Table(data_g, colWidths=[320, 90, 80])
+        t_gastos_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#FEE2E2')),
+            ('GRID', (0, 0), (-1, -2), 0.5, colors.HexColor('#FCA5A5')),
+            ('SPAN', (0, -1), (1, -1)),
+            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
+            ('PADDING', (0, 0), (-1, -1), 4),
+        ]))
+        story.append(t_gastos_table)
+        story.append(Spacer(1, 10))
+
+    if desglose:
+        story.append(Paragraph("<b>DESGLOSE DETALLADO DE EFECTIVO (DESGLOSE CONTABLE)</b>", cell_bold))
+        story.append(Spacer(1, 4))
+
+        data_desglose = [
+            [Paragraph("<b>BILLETES</b>", cell_bold), Paragraph("<b>Cant.</b>", cell_bold), Paragraph("<b>Total</b>", cell_bold),
+             Paragraph("<b>MONEDAS</b>", cell_bold), Paragraph("<b>Cant.</b>", cell_bold), Paragraph("<b>Total</b>", cell_bold)],
+            
+            [Paragraph("100 €", cell_style), Paragraph(str(desglose["b100"][0]), cell_style), Paragraph(f"{desglose['b100'][1]:.2f} €", cell_style),
+             Paragraph("2,00 €", cell_style), Paragraph(str(desglose["m200"][0]), cell_style), Paragraph(f"{desglose['m200'][1]:.2f} €", cell_style)],
+            
+            [Paragraph("50 €", cell_style), Paragraph(str(desglose["b50"][0]), cell_style), Paragraph(f"{desglose['b50'][1]:.2f} €", cell_style),
+             Paragraph("1,00 €", cell_style), Paragraph(str(desglose["m100"][0]), cell_style), Paragraph(f"{desglose['m100'][1]:.2f} €", cell_style)],
+            
+            [Paragraph("20 €", cell_style), Paragraph(str(desglose["b20"][0]), cell_style), Paragraph(f"{desglose['b20'][1]:.2f} €", cell_style),
+             Paragraph("0,50 €", cell_style), Paragraph(str(desglose["m050"][0]), cell_style), Paragraph(f"{desglose['m050'][1]:.2f} €", cell_style)],
+            
+            [Paragraph("10 €", cell_style), Paragraph(str(desglose["b10"][0]), cell_style), Paragraph(f"{desglose['b10'][1]:.2f} €", cell_style),
+             Paragraph("0,20 €", cell_style), Paragraph(str(desglose["m020"][0]), cell_style), Paragraph(f"{desglose['m020'][1]:.2f} €", cell_style)],
+            
+            [Paragraph("5 €", cell_style), Paragraph(str(desglose["b5"][0]), cell_style), Paragraph(f"{desglose['b5'][1]:.2f} €", cell_style),
+             Paragraph("0,10 €", cell_style), Paragraph(str(desglose["m010"][0]), cell_style), Paragraph(f"{desglose['m010'][1]:.2f} €", cell_style)],
+            
+            [Paragraph("", cell_style), Paragraph("", cell_style), Paragraph("", cell_style),
+             Paragraph("0,05 €", cell_style), Paragraph(str(desglose["m005"][0]), cell_style), Paragraph(f"{desglose['m005'][1]:.2f} €", cell_style)],
+            
+            [Paragraph("", cell_style), Paragraph("", cell_style), Paragraph("", cell_style),
+             Paragraph("0,02 €", cell_style), Paragraph(str(desglose["m002"][0]), cell_style), Paragraph(f"{desglose['m002'][1]:.2f} €", cell_style)],
+            
+            [Paragraph("", cell_style), Paragraph("", cell_style), Paragraph("", cell_style),
+             Paragraph("0,01 €", cell_style), Paragraph(str(desglose["m001"][0]), cell_style), Paragraph(f"{desglose['m001'][1]:.2f} €", cell_style)],
+            
+            [Paragraph("<b>TOTAL BILLETES</b>", cell_bold), "", Paragraph(f"<b>{t_billetes:.2f} €</b>", cell_bold),
+             Paragraph("<b>TOTAL MONEDAS</b>", cell_bold), "", Paragraph(f"<b>{t_monedas:.2f} €</b>", cell_bold)]
+        ]
+
+        t_desglose_table = Table(data_desglose, colWidths=[80, 45, 120, 80, 45, 130])
+        t_desglose_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#F1F5F9')),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
+            ('SPAN', (0, -1), (1, -1)),
+            ('SPAN', (3, -1), (4, -1)),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E2E8F0')),
+            ('ALIGN', (1, 0), (2, -1), 'RIGHT'),
+            ('ALIGN', (4, 0), (5, -1), 'RIGHT'),
+            ('PADDING', (0, 0), (-1, -1), 3),
+        ]))
+        story.append(t_desglose_table)
+        story.append(Spacer(1, 10))
+
+    t_teorico = t_cobros - t_gastos
+    texto_dif = f"+{dif:.2f} € (Sobrante)" if dif > 0 else (f"{dif:.2f} € (Faltante)" if dif < 0 else "0.00 € (Cuadra)")
+    data_a = [
+        [Paragraph("<b>Total Ventas Albaranes:</b>", cell_style), Paragraph(f"{t_cobros:.2f} €", cell_style), Paragraph("<b>Total Billetes Contados:</b>", cell_style), Paragraph(f"{t_billetes:.2f} €", cell_style)],
+        [Paragraph("<b>(-) Gastos en Metálico:</b>", cell_style), Paragraph(f"-{t_gastos:.2f} €", cell_style), Paragraph("<b>Total Monedas Contadas:</b>", cell_style), Paragraph(f"{t_monedas:.2f} €", cell_style)],
+        [Paragraph("<b>TOTAL TEÓRICO CAJA:</b>", cell_bold), Paragraph(f"<b>{t_teorico:.2f} €</b>", cell_bold), Paragraph("<b>TOTAL EFECTIVO CONTADO:</b>", cell_bold), Paragraph(f"<b>{t_fisico:.2f} €</b>", cell_bold)],
+        [Paragraph("<b>DIFERENCIA DE ARQUEO:</b>", cell_bold), Paragraph(f"<b>{texto_dif}</b>", cell_bold), "", ""]
+    ]
+
+    t_arqueo_table = Table(data_a, colWidths=[130, 120, 130, 120])
+    t_arqueo_table.setStyle(TableStyle([
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
+        ('SPAN', (1, 3), (3, 3)),
+        ('BACKGROUND', (0, 2), (-1, 3), colors.HexColor('#F8FAFC')),
+        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('ALIGN', (3, 0), (3, -1), 'RIGHT'),
+        ('PADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.append(t_arqueo_table)
+
+    if obs and obs.strip():
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("<b>OBSERVACIONES:</b>", cell_bold))
+        story.append(Spacer(1, 2))
+        story.append(Paragraph(obs.strip(), cell_style))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, dif, persona, desglose, obs, fecha_h_custom=None):
+    buffer = io.BytesIO()
+    PAGE_WIDTH = 317.0
+    doc = SimpleDocTemplate(buffer, pagesize=(PAGE_WIDTH, 1000.0), rightMargin=8, leftMargin=8, topMargin=10, bottomMargin=10)
+    story = []
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle('TTitle', parent=styles['Title'], fontSize=11, leading=13, alignment=1)
+    body_style = ParagraphStyle('TBody', parent=styles['Normal'], fontSize=8, leading=10)
+    bold_style = ParagraphStyle('TBold', parent=styles['Normal'], fontSize=8, leading=10, fontName='Helvetica-Bold')
+
+    fecha_h_gen = fecha_h_custom if fecha_h_custom else datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    story.append(Paragraph("<b>VENTA CAFÉ - CIERRE CAJA</b>", title_style))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph(f"<b>Fecha:</b> {fecha_h_gen}", body_style))
+    story.append(Paragraph(f"<b>Comercial:</b> {persona}", body_style))
+    story.append(Spacer(1, 6))
+
+    if cobros_df is not None and not cobros_df.empty:
+        story.append(Paragraph("<b>COBROS / ALBARANES</b>", bold_style))
+        story.append(Spacer(1, 2))
+        data_c = []
+        for _, r in cobros_df.iterrows():
+            alb = f"#{r['albaran']}" if r['albaran'] else f"#{r['id']}"
+            cli = str(r['cliente'])[:15]
+            data_c.append([
+                Paragraph(alb, body_style),
+                Paragraph(cli, body_style),
+                Paragraph(f"{float(r['importe']):.2f} €", bold_style)
+            ])
+        data_c.append([Paragraph("<b>TOTAL VENTAS</b>", bold_style), "", Paragraph(f"<b>{t_cobros:.2f} €</b>", bold_style)])
+
+        t_cobros_tbl = Table(data_c, colWidths=[55, 170, 75])
+        t_cobros_tbl.setStyle(TableStyle([
+            ('LINEBELOW', (0, -1), (-1, -1), 0.5, colors.black),
+            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
+            ('SPAN', (0, -1), (1, -1)),
+            ('PADDING', (0, 0), (-1, -1), 2),
+        ]))
+        story.append(t_cobros_tbl)
+        story.append(Spacer(1, 6))
+
+    if gastos_df is not None and not gastos_df.empty:
+        story.append(Paragraph("<b>GASTOS DE CAJA</b>", bold_style))
+        story.append(Spacer(1, 2))
+        data_g = []
+        for _, r in gastos_df.iterrows():
+            data_g.append([
+                Paragraph(str(r['concepto'])[:20], body_style),
+                Paragraph(f"{float(r['importe']):.2f} €", bold_style)
+            ])
+        data_g.append([Paragraph("<b>TOTAL GASTOS</b>", bold_style), Paragraph(f"<b>{t_gastos:.2f} €</b>", bold_style)])
+        t_gastos_tbl = Table(data_g, colWidths=[225, 75])
+        t_gastos_tbl.setStyle(TableStyle([
+            ('LINEBELOW', (0, -1), (-1, -1), 0.5, colors.black),
+            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
+            ('PADDING', (0, 0), (-1, -1), 2),
+        ]))
+        story.append(t_gastos_tbl)
+        story.append(Spacer(1, 6))
+
+    if desglose:
+        story.append(Paragraph("<b>DESGLOSE DE EFECTIVO CONTADO</b>", bold_style))
+        story.append(Spacer(1, 2))
+        data_d = []
+        etiquetas = {
+            "b100": "100€", "b50": "50€", "b20": "20€", "b10": "10€", "b5": "5€",
+            "m200": "2,00€", "m100": "1,00€", "m050": "0,50€", "m020": "0,20€",
+            "m010": "0,10€", "m005": "0,05€", "m002": "0,02€", "m001": "0,01€"
+        }
+        for k, v in desglose.items():
+            cant, tot = v
+            if cant > 0:
+                data_d.append([
+                    Paragraph(etiquetas[k], body_style),
+                    Paragraph(f"x{cant}", body_style),
+                    Paragraph(f"{tot:.2f} €", body_style)
+                ])
+        data_d.append([Paragraph("<b>TOTAL CONTADO</b>", bold_style), "", Paragraph(f"<b>{t_fisico:.2f} €</b>", bold_style)])
+        
+        t_desglose_tbl = Table(data_d, colWidths=[100, 50, 150])
+        t_desglose_tbl.setStyle(TableStyle([
+            ('LINEBELOW', (0, -1), (-1, -1), 0.5, colors.black),
+            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
+            ('SPAN', (0, -1), (1, -1)),
+            ('PADDING', (0, 0), (-1, -1), 2),
+        ]))
+        story.append(t_desglose_tbl)
+        story.append(Spacer(1, 6))
+
+    t_teorico = t_cobros - t_gastos
+    texto_dif = f"+{dif:.2f} € (Sobrante)" if dif > 0 else (f"{dif:.2f} € (Faltante)" if dif < 0 else "0.00 € (OK)")
+    
+    story.append(Paragraph(f"<b>Total Ventas:</b> {t_cobros:.2f} €", body_style))
+    story.append(Paragraph(f"<b>Total Gastos:</b> {t_gastos:.2f} €", body_style))
+    story.append(Paragraph(f"<b>Total Teórico:</b> {t_teorico:.2f} €", body_style))
+    story.append(Paragraph(f"<b>Efectivo Contado:</b> {t_fisico:.2f} €", body_style))
+    story.append(Paragraph(f"<b>Diferencia:</b> {texto_dif}", bold_style))
+
+    if obs and obs.strip():
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(f"<b>Obs:</b> {obs.strip()}", body_style))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
 # --- ESTADO Y VARIABLES DE SESIÓN ---
 fecha_actual = datetime.now().strftime("%Y-%m-%d")
 fecha_mostrar = datetime.now().strftime("%d/%m/%Y")
@@ -359,6 +614,15 @@ with tab_arqueo:
         else:
             st.error(f"❌ **FALTANTE:** {diferencia:.2f} € respecto al teórico ({total_teorico:.2f} €)")
 
+    st.divider()
+    # CAMPO DE OBSERVACIONES INTEGRADO EN EL ARQUEO
+    st.write("### 📝 Notas / Observaciones de la Caja")
+    observaciones = st.text_area(
+        "Añade observaciones para este cierre (opcional):",
+        key=f"obs_{user_id}",
+        placeholder="Ej: Se dejan 50€ en monedas para cambio en el cajetín / Sobrante por propina..."
+    )
+
 # ==========================================
 # PESTAÑA 4: INFORME PDF Y GENERACIÓN TICKET
 # ==========================================
@@ -367,7 +631,8 @@ with tab_pdf:
     
     st.info(f"**Comercial:** {user_nombre}", icon="👤")
     
-    observaciones = st.text_area("Notas / Observaciones del Cierre (opcional):", placeholder="Ej: Se dejan 50€ en monedas para cambio en el cajetín / Sobrante por propina...")
+    if observaciones and observaciones.strip():
+        st.write(f"📌 **Nota de caja agregada:** *{observaciones.strip()}*")
 
     desglose_efectivo = {
         "b100": (b100, b100 * 100),
@@ -384,259 +649,6 @@ with tab_pdf:
         "m002": (m002, m002 * 0.02),
         "m001": (m001, m001 * 0.01)
     }
-
-    # --- GENERADOR DE PDF (A4 STANDAR) ---
-    def generar_pdf_a4(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, dif, persona, desglose, obs):
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
-        story = []
-        styles = getSampleStyleSheet()
-
-        title_style = ParagraphStyle('DocTitle', parent=styles['Title'], fontSize=15, leading=18, textColor=colors.HexColor('#1E293B'), alignment=0)
-        sub_style = ParagraphStyle('DocSub', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#475569'))
-        cell_style = ParagraphStyle('Cell', parent=styles['Normal'], fontSize=8, leading=10)
-        cell_bold = ParagraphStyle('CellB', parent=styles['Normal'], fontSize=8, leading=10, fontName='Helvetica-Bold')
-
-        fecha_h_gen = datetime.now().strftime("%d/%m/%Y a las %H:%M")
-
-        story.append(Paragraph("<b>VENTA CAFÉ — HOJA DE CIERRE DE CAJA</b>", title_style))
-        story.append(Spacer(1, 4))
-        story.append(Paragraph(f"<b>Fecha/Hora Cierre:</b> {fecha_h_gen} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Entregado por:</b> {persona}", sub_style))
-        story.append(Spacer(1, 10))
-
-        story.append(Paragraph("<b>VENTAS CAFÉ (ALBARANES)</b>", cell_bold))
-        story.append(Spacer(1, 4))
-        
-        data_c = [[Paragraph("<b>Nº Albarán</b>", cell_bold), Paragraph("<b>Cliente</b>", cell_bold), Paragraph("<b>Fecha/Hora</b>", cell_bold), Paragraph("<b>Importe (€)</b>", cell_bold)]]
-        
-        if not cobros_df.empty:
-            for _, r in cobros_df.iterrows():
-                fh = f"{r['fecha']} {r['hora']}" if 'fecha' in r else str(r['hora'])
-                data_c.append([
-                    Paragraph(str(r['albaran']) if r['albaran'] else "-", cell_style),
-                    Paragraph(str(r['cliente']), cell_style),
-                    Paragraph(fh, cell_style),
-                    Paragraph(f"{float(r['importe']):.2f} €", cell_bold)
-                ])
-        data_c.append([Paragraph("<b>TOTAL VENTAS</b>", cell_bold), "", "", Paragraph(f"<b>{t_cobros:.2f} €</b>", cell_bold)])
-
-        t_cobros_table = Table(data_c, colWidths=[80, 230, 90, 90])
-        t_cobros_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E2E8F0')),
-            ('GRID', (0, 0), (-1, -2), 0.5, colors.HexColor('#CBD5E1')),
-            ('SPAN', (0, -1), (2, -1)),
-            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#F1F5F9')),
-            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
-            ('PADDING', (0, 0), (-1, -1), 4),
-        ]))
-        story.append(t_cobros_table)
-        story.append(Spacer(1, 10))
-
-        if not gastos_df.empty:
-            story.append(Paragraph("<b>GASTOS / SALIDAS DE CAJA</b>", cell_bold))
-            story.append(Spacer(1, 4))
-            data_g = [[Paragraph("<b>Concepto</b>", cell_bold), Paragraph("<b>Fecha/Hora</b>", cell_bold), Paragraph("<b>Importe (€)</b>", cell_bold)]]
-            for _, r in gastos_df.iterrows():
-                fh_g = f"{r['fecha']} {r['hora']}" if 'fecha' in r else str(r['hora'])
-                data_g.append([Paragraph(str(r['concepto']), cell_style), Paragraph(fh_g, cell_style), Paragraph(f"{float(r['importe']):.2f} €", cell_bold)])
-            data_g.append([Paragraph("<b>TOTAL GASTOS</b>", cell_bold), "", Paragraph(f"<b>{t_gastos:.2f} €</b>", cell_bold)])
-
-            t_gastos_table = Table(data_g, colWidths=[320, 90, 80])
-            t_gastos_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#FEE2E2')),
-                ('GRID', (0, 0), (-1, -2), 0.5, colors.HexColor('#FCA5A5')),
-                ('SPAN', (0, -1), (1, -1)),
-                ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
-                ('PADDING', (0, 0), (-1, -1), 4),
-            ]))
-            story.append(t_gastos_table)
-            story.append(Spacer(1, 10))
-
-        story.append(Paragraph("<b>DESGLOSE DETALLADO DE EFECTIVO (DESGLOSE CONTABLE)</b>", cell_bold))
-        story.append(Spacer(1, 4))
-
-        data_desglose = [
-            [Paragraph("<b>BILLETES</b>", cell_bold), Paragraph("<b>Cant.</b>", cell_bold), Paragraph("<b>Total</b>", cell_bold),
-             Paragraph("<b>MONEDAS</b>", cell_bold), Paragraph("<b>Cant.</b>", cell_bold), Paragraph("<b>Total</b>", cell_bold)],
-            
-            [Paragraph("100 €", cell_style), Paragraph(str(desglose["b100"][0]), cell_style), Paragraph(f"{desglose['b100'][1]:.2f} €", cell_style),
-             Paragraph("2,00 €", cell_style), Paragraph(str(desglose["m200"][0]), cell_style), Paragraph(f"{desglose['m200'][1]:.2f} €", cell_style)],
-            
-            [Paragraph("50 €", cell_style), Paragraph(str(desglose["b50"][0]), cell_style), Paragraph(f"{desglose['b50'][1]:.2f} €", cell_style),
-             Paragraph("1,00 €", cell_style), Paragraph(str(desglose["m100"][0]), cell_style), Paragraph(f"{desglose['m100'][1]:.2f} €", cell_style)],
-            
-            [Paragraph("20 €", cell_style), Paragraph(str(desglose["b20"][0]), cell_style), Paragraph(f"{desglose['b20'][1]:.2f} €", cell_style),
-             Paragraph("0,50 €", cell_style), Paragraph(str(desglose["m050"][0]), cell_style), Paragraph(f"{desglose['m050'][1]:.2f} €", cell_style)],
-            
-            [Paragraph("10 €", cell_style), Paragraph(str(desglose["b10"][0]), cell_style), Paragraph(f"{desglose['b10'][1]:.2f} €", cell_style),
-             Paragraph("0,20 €", cell_style), Paragraph(str(desglose["m020"][0]), cell_style), Paragraph(f"{desglose['m020'][1]:.2f} €", cell_style)],
-            
-            [Paragraph("5 €", cell_style), Paragraph(str(desglose["b5"][0]), cell_style), Paragraph(f"{desglose['b5'][1]:.2f} €", cell_style),
-             Paragraph("0,10 €", cell_style), Paragraph(str(desglose["m010"][0]), cell_style), Paragraph(f"{desglose['m010'][1]:.2f} €", cell_style)],
-            
-            [Paragraph("", cell_style), Paragraph("", cell_style), Paragraph("", cell_style),
-             Paragraph("0,05 €", cell_style), Paragraph(str(desglose["m005"][0]), cell_style), Paragraph(f"{desglose['m005'][1]:.2f} €", cell_style)],
-            
-            [Paragraph("", cell_style), Paragraph("", cell_style), Paragraph("", cell_style),
-             Paragraph("0,02 €", cell_style), Paragraph(str(desglose["m002"][0]), cell_style), Paragraph(f"{desglose['m002'][1]:.2f} €", cell_style)],
-            
-            [Paragraph("", cell_style), Paragraph("", cell_style), Paragraph("", cell_style),
-             Paragraph("0,01 €", cell_style), Paragraph(str(desglose["m001"][0]), cell_style), Paragraph(f"{desglose['m001'][1]:.2f} €", cell_style)],
-            
-            [Paragraph("<b>TOTAL BILLETES</b>", cell_bold), "", Paragraph(f"<b>{t_billetes:.2f} €</b>", cell_bold),
-             Paragraph("<b>TOTAL MONEDAS</b>", cell_bold), "", Paragraph(f"<b>{t_monedas:.2f} €</b>", cell_bold)]
-        ]
-
-        t_desglose_table = Table(data_desglose, colWidths=[80, 45, 120, 80, 45, 130])
-        t_desglose_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#F1F5F9')),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
-            ('SPAN', (0, -1), (1, -1)),
-            ('SPAN', (3, -1), (4, -1)),
-            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E2E8F0')),
-            ('ALIGN', (1, 0), (2, -1), 'RIGHT'),
-            ('ALIGN', (4, 0), (5, -1), 'RIGHT'),
-            ('PADDING', (0, 0), (-1, -1), 3),
-        ]))
-        story.append(t_desglose_table)
-        story.append(Spacer(1, 10))
-
-        t_teorico = t_cobros - t_gastos
-        texto_dif = f"+{dif:.2f} € (Sobrante)" if dif > 0 else (f"{dif:.2f} € (Faltante)" if dif < 0 else "0.00 € (Cuadra)")
-        data_a = [
-            [Paragraph("<b>Total Ventas Albaranes:</b>", cell_style), Paragraph(f"{t_cobros:.2f} €", cell_style), Paragraph("<b>Total Billetes Contados:</b>", cell_style), Paragraph(f"{t_billetes:.2f} €", cell_style)],
-            [Paragraph("<b>(-) Gastos en Metálico:</b>", cell_style), Paragraph(f"-{t_gastos:.2f} €", cell_style), Paragraph("<b>Total Monedas Contadas:</b>", cell_style), Paragraph(f"{t_monedas:.2f} €", cell_style)],
-            [Paragraph("<b>TOTAL TEÓRICO CAJA:</b>", cell_bold), Paragraph(f"<b>{t_teorico:.2f} €</b>", cell_bold), Paragraph("<b>TOTAL EFECTIVO CONTADO:</b>", cell_bold), Paragraph(f"<b>{t_fisico:.2f} €</b>", cell_bold)],
-            [Paragraph("<b>DIFERENCIA DE ARQUEO:</b>", cell_bold), Paragraph(f"<b>{texto_dif}</b>", cell_bold), "", ""]
-        ]
-
-        t_arqueo_table = Table(data_a, colWidths=[130, 120, 130, 120])
-        t_arqueo_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
-            ('SPAN', (1, 3), (3, 3)),
-            ('BACKGROUND', (0, 2), (-1, 3), colors.HexColor('#F8FAFC')),
-            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-            ('ALIGN', (3, 0), (3, -1), 'RIGHT'),
-            ('PADDING', (0, 0), (-1, -1), 4),
-        ]))
-        story.append(t_arqueo_table)
-
-        if obs and obs.strip():
-            story.append(Spacer(1, 10))
-            story.append(Paragraph("<b>OBSERVACIONES:</b>", cell_bold))
-            story.append(Spacer(1, 2))
-            story.append(Paragraph(obs.strip(), cell_style))
-
-        doc.build(story)
-        buffer.seek(0)
-        return buffer
-
-    # --- GENERADOR DE PDF PARA TICKET TÉRMICO (DATECS DPP-450: ANCHO 112MM) ---
-    def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, dif, persona, desglose, obs):
-        buffer = io.BytesIO()
-        # Ancho 112mm (317 puntos) y alto dinámico
-        PAGE_WIDTH = 317.0
-        doc = SimpleDocTemplate(buffer, pagesize=(PAGE_WIDTH, 1000.0), rightMargin=8, leftMargin=8, topMargin=10, bottomMargin=10)
-        story = []
-        styles = getSampleStyleSheet()
-
-        title_style = ParagraphStyle('TTitle', parent=styles['Title'], fontSize=11, leading=13, alignment=1)
-        body_style = ParagraphStyle('TBody', parent=styles['Normal'], fontSize=8, leading=10)
-        bold_style = ParagraphStyle('TBold', parent=styles['Normal'], fontSize=8, leading=10, fontName='Helvetica-Bold')
-
-        fecha_h_gen = datetime.now().strftime("%d/%m/%Y %H:%M")
-
-        story.append(Paragraph("<b>VENTA CAFÉ - CIERRE CAJA</b>", title_style))
-        story.append(Spacer(1, 4))
-        story.append(Paragraph(f"<b>Fecha:</b> {fecha_h_gen}", body_style))
-        story.append(Paragraph(f"<b>Comercial:</b> {persona}", body_style))
-        story.append(Spacer(1, 6))
-
-        story.append(Paragraph("<b>COBROS / ALBARANES</b>", bold_style))
-        story.append(Spacer(1, 2))
-
-        data_c = []
-        if not cobros_df.empty:
-            for _, r in cobros_df.iterrows():
-                alb = f"#{r['albaran']}" if r['albaran'] else f"#{r['id']}"
-                cli = str(r['cliente'])[:15]
-                data_c.append([
-                    Paragraph(alb, body_style),
-                    Paragraph(cli, body_style),
-                    Paragraph(f"{float(r['importe']):.2f} €", bold_style)
-                ])
-        data_c.append([Paragraph("<b>TOTAL VENTAS</b>", bold_style), "", Paragraph(f"<b>{t_cobros:.2f} €</b>", bold_style)])
-
-        t_cobros_tbl = Table(data_c, colWidths=[55, 170, 75])
-        t_cobros_tbl.setStyle(TableStyle([
-            ('LINEBELOW', (0, -1), (-1, -1), 0.5, colors.black),
-            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
-            ('SPAN', (0, -1), (1, -1)),
-            ('PADDING', (0, 0), (-1, -1), 2),
-        ]))
-        story.append(t_cobros_tbl)
-        story.append(Spacer(1, 6))
-
-        if not gastos_df.empty:
-            story.append(Paragraph("<b>GASTOS DE CAJA</b>", bold_style))
-            story.append(Spacer(1, 2))
-            data_g = []
-            for _, r in gastos_df.iterrows():
-                data_g.append([
-                    Paragraph(str(r['concepto'])[:20], body_style),
-                    Paragraph(f"{float(r['importe']):.2f} €", bold_style)
-                ])
-            data_g.append([Paragraph("<b>TOTAL GASTOS</b>", bold_style), Paragraph(f"<b>{t_gastos:.2f} €</b>", bold_style)])
-            t_gastos_tbl = Table(data_g, colWidths=[225, 75])
-            t_gastos_tbl.setStyle(TableStyle([
-                ('LINEBELOW', (0, -1), (-1, -1), 0.5, colors.black),
-                ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
-                ('PADDING', (0, 0), (-1, -1), 2),
-            ]))
-            story.append(t_gastos_tbl)
-            story.append(Spacer(1, 6))
-
-        story.append(Paragraph("<b>DESGLOSE DE EFECTIVO CONTADO</b>", bold_style))
-        story.append(Spacer(1, 2))
-        data_d = []
-        etiquetas = {
-            "b100": "100€", "b50": "50€", "b20": "20€", "b10": "10€", "b5": "5€",
-            "m200": "2,00€", "m100": "1,00€", "m050": "0,50€", "m020": "0,20€",
-            "m010": "0,10€", "m005": "0,05€", "m002": "0,02€", "m001": "0,01€"
-        }
-        for k, v in desglose.items():
-            cant, tot = v
-            if cant > 0:
-                data_d.append([
-                    Paragraph(etiquetas[k], body_style),
-                    Paragraph(f"x{cant}", body_style),
-                    Paragraph(f"{tot:.2f} €", body_style)
-                ])
-        data_d.append([Paragraph("<b>TOTAL CONTADO</b>", bold_style), "", Paragraph(f"<b>{t_fisico:.2f} €</b>", bold_style)])
-        
-        t_desglose_tbl = Table(data_d, colWidths=[100, 50, 150])
-        t_desglose_tbl.setStyle(TableStyle([
-            ('LINEBELOW', (0, -1), (-1, -1), 0.5, colors.black),
-            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
-            ('SPAN', (0, -1), (1, -1)),
-            ('PADDING', (0, 0), (-1, -1), 2),
-        ]))
-        story.append(t_desglose_tbl)
-        story.append(Spacer(1, 6))
-
-        t_teorico = t_cobros - t_gastos
-        texto_dif = f"+{dif:.2f} € (Sobrante)" if dif > 0 else (f"{dif:.2f} € (Faltante)" if dif < 0 else "0.00 € (OK)")
-        
-        story.append(Paragraph(f"<b>Total Teórico:</b> {t_teorico:.2f} €", body_style))
-        story.append(Paragraph(f"<b>Diferencia:</b> {texto_dif}", bold_style))
-
-        if obs and obs.strip():
-            story.append(Spacer(1, 4))
-            story.append(Paragraph(f"<b>Obs:</b> {obs.strip()}", body_style))
-
-        doc.build(story)
-        buffer.seek(0)
-        return buffer
 
     if not df_cobros.empty:
         # Opción 1: Generar PDF para Ticketera Datecs
@@ -690,15 +702,14 @@ with tab_pdf:
 # ==========================================
 with tab_historial:
     st.subheader("📜 Historial de Cierres Guardados")
-    st.caption("Consulta los resúmenes de tus cajas cerradas anteriormente.")
+    st.caption("Consulta los resúmenes de tus cajas cerradas anteriormente y vuelve a imprimirlos si lo necesitas.")
 
     historial = obtener_historial_cierres(user_id)
     if historial:
         for c in historial:
             with st.expander(f"🗓️ Cierre del {c['fecha_cierre']} ({c['hora_cierre']}) — Ventas: {c['total_ventas']:.2f} €"):
-                st.write(f"**Fecha y Hora de Cierre:** {c['fecha_cierre']} a las {c['hora_cierre']}")
-                st.write(f"**Total Ventas:** {c['total_ventas']:.2f} €")
-                st.write(f"**Total Gastos:** {c['total_gastos']:.2f} €")
+                st.write(f"**Fecha y Hora:** {c['fecha_cierre']} a las {c['hora_cierre']}")
+                st.write(f"**Total Ventas:** {c['total_ventas']:.2f} € | **Total Gastos:** {c['total_gastos']:.2f} €")
                 st.write(f"**Efectivo Contado:** {c['total_efectivo']:.2f} €")
                 
                 dif_val = float(c['diferencia'])
@@ -711,5 +722,29 @@ with tab_historial:
 
                 if c.get("observaciones"):
                     st.info(f"**Observaciones:** {c['observaciones']}")
+
+                # RE-IMPRESIÓN DE CIERRES ANTERIORES
+                st.write("---")
+                st.write("**Re-imprimir este cierre:**")
+                
+                fecha_custom = f"{c['fecha_cierre']} a las {c['hora_cierre']}"
+                
+                pdf_hist_ticket = generar_pdf_ticket_termico(
+                    cobros_df=None, gastos_df=None, 
+                    t_cobros=float(c['total_ventas']), t_gastos=float(c['total_gastos']), 
+                    t_billetes=0, t_monedas=0, t_fisico=float(c['total_efectivo']), 
+                    dif=dif_val, persona=user_nombre, desglose=None, 
+                    obs=c.get("observaciones", ""), fecha_h_custom=fecha_custom
+                )
+                
+                st.download_button(
+                    label=f"🖨️ Re-imprimir Ticket Datecs (#{c['id']})",
+                    data=pdf_hist_ticket,
+                    file_name=f"Ticket_Historial_{c['id']}.pdf",
+                    mime="application/pdf",
+                    key=f"hist_tick_{c['id']}",
+                    use_container_width=True
+                )
     else:
         st.info("Aún no has guardado ningún cierre de caja en el historial.")
+ 
