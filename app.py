@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import pytz
+from zoneinfo import ZoneInfo
 import io
 from supabase import create_client, Client
 from reportlab.lib.pagesizes import A4
@@ -17,12 +17,11 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- ZONA HORARIA DE ESPAÑA ---
-TZ_ESPAÑA = pytz.timezone("Europe/Madrid")
+# --- ZONA HORARIA DE ESPAÑA (NATIVA) ---
+TZ_ESPAÑA = ZoneInfo("Europe/Madrid")
 
 def obtener_tiempo_actual():
-    now_utc = datetime.now(pytz.utc)
-    return now_utc.astimezone(TZ_ESPAÑA)
+    return datetime.now(TZ_ESPAÑA)
 
 # --- CONEXIÓN A SUPABASE ---
 @st.cache_resource
@@ -368,7 +367,6 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
             if k in desglose and desglose[k][0] > 0:
                 filas_m.append((etiq, desglose[k][0], desglose[k][1]))
                 
-    # Cálculo de filas para altura (incluyendo subtítulos y subtotales intermedios)
     n_desglose_rows = len(filas_b) + len(filas_m) + (2 if filas_b else 0) + (2 if filas_m else 0)
     estimated_height = 260 + (n_cobros * 16) + (n_gastos * 16) + (n_desglose_rows * 15) + (70 if obs else 0)
     
@@ -413,7 +411,6 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
             ])
         data_c.append([Paragraph("<b>TOTAL VENTAS</b>", bold_style), "", Paragraph(f"<b>{t_cobros:.2f} €</b>", r_bold)])
 
-        # Albarán optimizado (65pt) para que `#Cafetera` no salte de línea
         t_cobros_tbl = Table(data_c, colWidths=[65, 185, 59], repeatRows=0)
         t_cobros_tbl.setStyle(TableStyle([
             ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
@@ -450,7 +447,6 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         story.append(Spacer(1, 3))
         data_d = []
         
-        # Bloque Billetes con su subtotal independiente
         if filas_b:
             data_d.append([Paragraph("--- BILLETES ---", sub_seccion), "", ""])
             for etiq, cant, tot in filas_b:
@@ -461,7 +457,6 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
                 ])
             data_d.append([Paragraph("<b>Subtotal Billetes</b>", bold_style), "", Paragraph(f"<b>{t_billetes:.2f} €</b>", r_bold)])
                 
-        # Bloque Monedas con su subtotal independiente
         if filas_m:
             data_d.append([Paragraph("--- MONEDAS ---", sub_seccion), "", ""])
             for etiq, cant, tot in filas_m:
@@ -472,7 +467,6 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
                 ])
             data_d.append([Paragraph("<b>Subtotal Monedas</b>", bold_style), "", Paragraph(f"<b>{t_monedas:.2f} €</b>", r_bold)])
                 
-        # Total Contado final (Suma de ambos)
         data_d.append([Paragraph("<b>TOTAL CONTADO</b>", bold_style), "", Paragraph(f"<b>{t_fisico:.2f} €</b>", r_bold)])
         
         t_desglose_tbl = Table(data_d, colWidths=[90, 80, 139])
