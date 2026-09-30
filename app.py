@@ -31,11 +31,15 @@ USUARIOS = {
     "8888": {"id": "usr2", "nombre": "Comercial 2"}
 }
 
-# --- CONTROL DE ACCESO MEDIANTE PIN ---
+# --- INICIALIZACIÓN BÁSICA DE SESIÓN ---
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
     st.session_state.usuario_actual = None
 
+if "edit_id" not in st.session_state:
+    st.session_state.edit_id = None
+
+# --- CONTROL DE ACCESO MEDIANTE PIN ---
 if not st.session_state.autenticado:
     st.title("☕ Venta Café — Control de Acceso")
     st.caption("Introduce tu PIN de seguridad para acceder a tu caja.")
@@ -126,24 +130,33 @@ def agregar_gasto(fecha, hora, concepto, importe, u_id):
 def eliminar_gasto(id_gasto, u_id):
     supabase.table("gastos").delete().eq("id", id_gasto).eq("usuario_id", u_id).execute()
 
-# --- FUNCIONES DE ARQUEO Y BORRADOR PERSISTENTE ---
+# --- FUNCIONES DE ARQUEO PERSISTENTE EN SUPABASE ---
 def obtener_arqueo_guardado(u_id):
-    res = supabase.table("caja_activa").select("*").eq("usuario_id", u_id).execute()
-    if res.data:
-        return res.data[0]
+    try:
+        res = supabase.table("caja_activa").select("*").eq("usuario_id", u_id).execute()
+        if res.data:
+            return res.data[0]
+    except Exception:
+        pass
     return None
 
 def guardar_arqueo_bd(u_id, datos_dict, obs_text):
     payload = {"usuario_id": u_id, "observaciones": obs_text}
     payload.update(datos_dict)
-    res = supabase.table("caja_activa").select("usuario_id").eq("usuario_id", u_id).execute()
-    if res.data:
-        supabase.table("caja_activa").update(payload).eq("usuario_id", u_id).execute()
-    else:
-        supabase.table("caja_activa").insert(payload).execute()
+    try:
+        res = supabase.table("caja_activa").select("usuario_id").eq("usuario_id", u_id).execute()
+        if res.data:
+            supabase.table("caja_activa").update(payload).eq("usuario_id", u_id).execute()
+        else:
+            supabase.table("caja_activa").insert(payload).execute()
+    except Exception as e:
+        st.error(f"Error al guardar arqueo: {e}")
 
 def vaciar_arqueo_bd(u_id):
-    supabase.table("caja_activa").delete().eq("usuario_id", u_id).execute()
+    try:
+        supabase.table("caja_activa").delete().eq("usuario_id", u_id).execute()
+    except Exception:
+        pass
 
 def cerrar_y_guardar_caja(u_id, t_ventas, t_gastos, t_efectivo, dif, obs, desglose_dict):
     now = datetime.now()
@@ -472,6 +485,7 @@ with col_logout:
     if st.button("🔒 Salir"):
         st.session_state.autenticado = False
         st.session_state.usuario_actual = None
+        st.session_state.caja_activa_cargada = {}
         st.rerun()
 
 df_cobros = obtener_cobros_activos(user_id)
