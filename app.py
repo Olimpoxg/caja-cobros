@@ -335,40 +335,54 @@ def generar_pdf_a4(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_moned
 
 def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, dif, persona, desglose, obs, fecha_h_custom=None):
     buffer = io.BytesIO()
-    PAGE_WIDTH = 317.0
+    PAGE_WIDTH = 309.0  # Ancho útil optimizado (112mm con márgenes ajustados)
     
     n_cobros = len(cobros_df) if cobros_df is not None and not cobros_df.empty else 1
     n_gastos = len(gastos_df) if gastos_df is not None and not gastos_df.empty else 0
-    n_desglose = sum(1 for v in desglose.values() if v[0] > 0) if desglose else 0
     
-    estimated_height = 250 + (n_cobros * 18) + (n_gastos * 18) + (n_desglose * 16) + (80 if obs else 0)
+    # ORDEN ESTRICTO: Billetes de 100€ a 5€ primero, luego Monedas de 2,00€ a 0,01€
+    orden_desglose = [
+        ("b100", "100€"), ("b50", "50€"), ("b20", "20€"), ("b10", "10€"), ("b5", "5€"),
+        ("m200", "2,00€"), ("m100", "1,00€"), ("m050", "0,50€"), ("m020", "0,20€"),
+        ("m010", "0,10€"), ("m005", "0,05€"), ("m002", "0,02€"), ("m001", "0,01€")
+    ]
+    
+    filas_desglose = []
+    if desglose:
+        for key_d, etiq in orden_desglose:
+            if key_d in desglose and desglose[key_d][0] > 0:
+                filas_desglose.append((etiq, desglose[key_d][0], desglose[key_d][1]))
+                
+    n_desglose = len(filas_desglose)
+    estimated_height = 240 + (n_cobros * 16) + (n_gastos * 16) + (n_desglose * 15) + (70 if obs else 0)
     
     doc = SimpleDocTemplate(
         buffer, 
         pagesize=(PAGE_WIDTH, float(estimated_height)), 
-        rightMargin=10, 
-        leftMargin=10, 
-        topMargin=12, 
-        bottomMargin=12
+        rightMargin=4, 
+        leftMargin=4, 
+        topMargin=10, 
+        bottomMargin=10
     )
     story = []
     styles = getSampleStyleSheet()
 
-    title_style = ParagraphStyle('TTitle', parent=styles['Title'], fontSize=14, leading=16, alignment=1)
-    body_style = ParagraphStyle('TBody', parent=styles['Normal'], fontSize=10, leading=12)
-    bold_style = ParagraphStyle('TBold', parent=styles['Normal'], fontSize=10, leading=12, fontName='Helvetica-Bold')
+    # Estilos de texto con alineación explícita
+    title_style = ParagraphStyle('TTitle', parent=styles['Title'], fontSize=13, leading=15, alignment=1)
+    body_style  = ParagraphStyle('TBody', parent=styles['Normal'], fontSize=9, leading=11, alignment=0)
+    bold_style  = ParagraphStyle('TBold', parent=styles['Normal'], fontSize=9, leading=11, fontName='Helvetica-Bold', alignment=0)
     
-    # Estilos específicos alineados a la derecha
-    right_body = ParagraphStyle('RBody', parent=styles['Normal'], fontSize=10, leading=12, alignment=2)
-    right_bold = ParagraphStyle('RBold', parent=styles['Normal'], fontSize=10, leading=12, fontName='Helvetica-Bold', alignment=2)
+    # Estilos obligatorios para alineación A LA DERECHA (alignment=2)
+    r_body = ParagraphStyle('RBody', parent=styles['Normal'], fontSize=9, leading=11, alignment=2)
+    r_bold = ParagraphStyle('RBold', parent=styles['Normal'], fontSize=9, leading=11, fontName='Helvetica-Bold', alignment=2)
 
     fecha_h_gen = fecha_h_custom if fecha_h_custom else datetime.now().strftime("%d/%m/%Y %H:%M")
 
     story.append(Paragraph("<b>VENTA CAFÉ - CIERRE CAJA</b>", title_style))
-    story.append(Spacer(1, 6))
+    story.append(Spacer(1, 5))
     story.append(Paragraph(f"<b>Fecha:</b> {fecha_h_gen}", body_style))
     story.append(Paragraph(f"<b>Comercial:</b> {persona}", body_style))
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 6))
 
     if cobros_df is not None and not cobros_df.empty:
         story.append(Paragraph("<b>COBROS / ALBARANES</b>", bold_style))
@@ -380,20 +394,20 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
             data_c.append([
                 Paragraph(alb, body_style),
                 Paragraph(cli, body_style),
-                Paragraph(f"{float(r['importe']):.2f} €", right_bold)
+                Paragraph(f"{float(r['importe']):.2f} €", r_bold)
             ])
-        data_c.append([Paragraph("<b>TOTAL VENTAS</b>", bold_style), "", Paragraph(f"<b>{t_cobros:.2f} €</b>", right_bold)])
+        data_c.append([Paragraph("<b>TOTAL VENTAS</b>", bold_style), "", Paragraph(f"<b>{t_cobros:.2f} €</b>", r_bold)])
 
-        # Ajuste de anchuras: Cliente gana espacio (170pt) para evitar cortes
-        t_cobros_tbl = Table(data_c, colWidths=[55, 170, 72])
+        # Ancho extendido para Cliente: 200pt (sin recortes)
+        t_cobros_tbl = Table(data_c, colWidths=[48, 200, 53])
         t_cobros_tbl.setStyle(TableStyle([
             ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
-            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
+            ('ALIGN', (2, 0), (2, -1), 'RIGHT'),
             ('SPAN', (0, -1), (1, -1)),
-            ('PADDING', (0, 0), (-1, -1), 3),
+            ('PADDING', (0, 0), (-1, -1), 2),
         ]))
         story.append(t_cobros_tbl)
-        story.append(Spacer(1, 8))
+        story.append(Spacer(1, 6))
 
     if gastos_df is not None and not gastos_df.empty:
         story.append(Paragraph("<b>GASTOS DE CAJA</b>", bold_style))
@@ -402,51 +416,41 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         for _, r in gastos_df.iterrows():
             data_g.append([
                 Paragraph(str(r['concepto']).strip(), body_style),
-                Paragraph(f"{float(r['importe']):.2f} €", right_bold)
+                Paragraph(f"{float(r['importe']):.2f} €", r_bold)
             ])
-        data_g.append([Paragraph("<b>TOTAL GASTOS</b>", bold_style), Paragraph(f"<b>{t_gastos:.2f} €</b>", right_bold)])
-        t_gastos_tbl = Table(data_g, colWidths=[225, 72])
+        data_g.append([Paragraph("<b>TOTAL GASTOS</b>", bold_style), Paragraph(f"<b>{t_gastos:.2f} €</b>", r_bold)])
+        t_gastos_tbl = Table(data_g, colWidths=[248, 53])
         t_gastos_tbl.setStyle(TableStyle([
             ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
-            ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
-            ('PADDING', (0, 0), (-1, -1), 3),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+            ('PADDING', (0, 0), (-1, -1), 2),
         ]))
         story.append(t_gastos_tbl)
-        story.append(Spacer(1, 8))
+        story.append(Spacer(1, 6))
 
-    if desglose:
+    if n_desglose > 0:
         story.append(Paragraph("<b>DESGLOSE DE EFECTIVO CONTADO</b>", bold_style))
         story.append(Spacer(1, 3))
         data_d = []
         
-        # Orden estricto: Billetes primero, luego Monedas
-        orden_desglose = [
-            ("b100", "100€"), ("b50", "50€"), ("b20", "20€"), ("b10", "10€"), ("b5", "5€"),
-            ("m200", "2,00€"), ("m100", "1,00€"), ("m050", "0,50€"), ("m020", "0,20€"),
-            ("m010", "0,10€"), ("m005", "0,05€"), ("m002", "0,02€"), ("m001", "0,01€")
-        ]
+        for etiq, cant, tot in filas_desglose:
+            data_d.append([
+                Paragraph(etiq, body_style),
+                Paragraph(f"x{cant}", r_body),
+                Paragraph(f"{tot:.2f} €", r_body)
+            ])
+        data_d.append([Paragraph("<b>TOTAL CONTADO</b>", bold_style), "", Paragraph(f"<b>{t_fisico:.2f} €</b>", r_bold)])
         
-        for k, etiqueta in orden_desglose:
-            if k in desglose:
-                cant, tot = desglose[k]
-                if cant > 0:
-                    data_d.append([
-                        Paragraph(etiqueta, body_style),
-                        Paragraph(f"x{cant}", right_body),
-                        Paragraph(f"{tot:.2f} €", right_body)
-                    ])
-        data_d.append([Paragraph("<b>TOTAL CONTADO</b>", bold_style), "", Paragraph(f"<b>{t_fisico:.2f} €</b>", right_bold)])
-        
-        # Columna de multiplicadores (x6, x27...) e importes alineados a la derecha
-        t_desglose_tbl = Table(data_d, colWidths=[90, 70, 137])
+        # Columna de desglose con multiplicaciones alineadas a la derecha
+        t_desglose_tbl = Table(data_d, colWidths=[100, 80, 121])
         t_desglose_tbl.setStyle(TableStyle([
             ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
             ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
             ('SPAN', (0, -1), (1, -1)),
-            ('PADDING', (0, 0), (-1, -1), 3),
+            ('PADDING', (0, 0), (-1, -1), 2),
         ]))
         story.append(t_desglose_tbl)
-        story.append(Spacer(1, 8))
+        story.append(Spacer(1, 6))
 
     t_teorico = t_cobros - t_gastos
     texto_dif = f"+{dif:.2f} € (Sobrante)" if dif > 0 else (f"{dif:.2f} € (Faltante)" if dif < 0 else "0.00 € (OK)")
@@ -459,7 +463,7 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
     story.append(Paragraph(f"<b>Diferencia:</b> {texto_dif}", bold_style))
 
     if obs and obs.strip():
-        story.append(Spacer(1, 6))
+        story.append(Spacer(1, 5))
         story.append(Paragraph(f"<b>Obs:</b> {obs.strip()}", body_style))
 
     doc.build(story)
@@ -579,7 +583,7 @@ with tab_cobros:
                 
                 c1, c2 = st.columns(2)
                 with c1:
-                    if st.button("✏️ Editar", key=f"edit_c_{row['id']}", use_container_width=True):
+                    if st.button("✏️️ Editar", key=f"edit_c_{row['id']}", use_container_width=True):
                         st.session_state.edit_id = int(row['id'])
                         st.rerun()
                 with c2:
@@ -847,4 +851,3 @@ with tab_historial:
                 )
     else:
         st.info("Aún no has guardado ningún cierre de caja en el historial.")
- 
