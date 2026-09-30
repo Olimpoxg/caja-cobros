@@ -57,9 +57,9 @@ if not st.session_state.autenticado:
 user_id = st.session_state.usuario_actual["id"]
 user_nombre = st.session_state.usuario_actual["nombre"]
 
-# --- FUNCIONES DE BASE DE DATOS (Supabase) ---
-def obtener_cobros_hoy(fecha, u_id):
-    res = supabase.table("cobros").select("*").eq("fecha", fecha).eq("usuario_id", u_id).execute()
+# --- FUNCIONES DE BASE DE DATOS (Caja Activa Multidía) ---
+def obtener_cobros_activos(u_id):
+    res = supabase.table("cobros").select("*").eq("usuario_id", u_id).execute()
     data = res.data
     if data:
         df = pd.DataFrame(data)
@@ -70,7 +70,6 @@ def obtener_cobros_hoy(fecha, u_id):
 def guardar_cliente_habitual(nombre_cliente, u_id):
     if nombre_cliente and nombre_cliente.strip():
         nombre_clean = nombre_cliente.strip()
-        # Verificar si ya existe para evitar duplicados
         exist = supabase.table("clientes").select("id").eq("usuario_id", u_id).eq("nombre", nombre_clean).execute()
         if not exist.data:
             supabase.table("clientes").insert({"usuario_id": u_id, "nombre": nombre_clean}).execute()
@@ -106,8 +105,8 @@ def actualizar_cobro(id_cobro, cliente, albaran, importe, u_id):
 def eliminar_cobro(id_cobro, u_id):
     supabase.table("cobros").delete().eq("id", id_cobro).eq("usuario_id", u_id).execute()
 
-def obtener_gastos_hoy(fecha, u_id):
-    res = supabase.table("gastos").select("*").eq("fecha", fecha).eq("usuario_id", u_id).execute()
+def obtener_gastos_activos(u_id):
+    res = supabase.table("gastos").select("*").eq("usuario_id", u_id).execute()
     data = res.data
     if data:
         df = pd.DataFrame(data)
@@ -127,12 +126,33 @@ def agregar_gasto(fecha, hora, concepto, importe, u_id):
 def eliminar_gasto(id_gasto, u_id):
     supabase.table("gastos").delete().eq("id", id_gasto).eq("usuario_id", u_id).execute()
 
-def vaciar_caja_del_dia(u_id):
+def cerrar_y_guardar_caja(u_id, t_ventas, t_gastos, t_efectivo, dif, obs):
+    now = datetime.now()
+    fecha_c = now.strftime("%d/%m/%Y")
+    hora_c = now.strftime("%H:%M")
+    
+    # Guardar en el historial de cierres
+    supabase.table("cierres").insert({
+        "usuario_id": u_id,
+        "fecha_cierre": fecha_c,
+        "hora_cierre": hora_c,
+        "total_ventas": float(t_ventas),
+        "total_gastos": float(t_gastos),
+        "total_efectivo": float(t_efectivo),
+        "diferencia": float(dif),
+        "observaciones": obs
+    }).execute()
+
+    # Vaciar datos de la caja activa
     supabase.table("cobros").delete().eq("usuario_id", u_id).execute()
     supabase.table("gastos").delete().eq("usuario_id", u_id).execute()
 
+def obtener_historial_cierres(u_id):
+    res = supabase.table("cierres").select("*").eq("usuario_id", u_id).order("id", desc=True).execute()
+    return res.data if res.data else []
+
 # --- ESTADO Y VARIABLES DE SESIÓN ---
-fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+fecha_actual = datetime.now().strftime("%Y-%m-%d")
 fecha_mostrar = datetime.now().strftime("%d/%m/%Y")
 
 if "edit_id" not in st.session_state:
@@ -144,24 +164,24 @@ for d in denominaciones:
     if key_d not in st.session_state:
         st.session_state[key_d] = 0
 
-# Cabecera principal
+# Cabecera
 col_tit, col_logout = st.columns([3, 1])
 with col_tit:
-    st.title("☕ Venta Café — Caja Diaria")
-    st.caption(f"📅 Fecha: {fecha_mostrar} | 👤 Usuario: **{user_nombre}**")
+    st.title("☕ Venta Café — Caja Activa")
+    st.caption(f"👤 Comercial: **{user_nombre}** | Estado: **Caja en Curso**")
 with col_logout:
     if st.button("🔒 Salir"):
         st.session_state.autenticado = False
         st.session_state.usuario_actual = None
         st.rerun()
 
-df_cobros = obtener_cobros_hoy(fecha_hoy, user_id)
-df_gastos = obtener_gastos_hoy(fecha_hoy, user_id)
+df_cobros = obtener_cobros_activos(user_id)
+df_gastos = obtener_gastos_activos(user_id)
 lista_clientes = obtener_todos_los_clientes(user_id)
 nombres_clientes = [c[1] for c in lista_clientes]
 
 # --- PESTAÑAS DE NAVEGACIÓN ---
-tab_cobros, tab_gastos, tab_arqueo, tab_pdf = st.tabs(["💰 Cobros", "💸 Gastos", "🧮 Arqueo Billetes", "📄 PDF Cierre"])
+tab_cobros, tab_gastos, tab_arqueo, tab_pdf, tab_historial = st.tabs(["💰 Cobros", "💸 Gastos", "🧮 Arqueo", "📄 PDF Cierre", "📜 Historial Cierres"])
 
 # ==========================================
 # PESTAÑA 1: COBROS (VENTAS CAFÉ)
@@ -211,27 +231,28 @@ with tab_cobros:
             st.error("El importe debe ser mayor que 0.00 €.")
         else:
             hora_act = datetime.now().strftime("%H:%M")
+            fecha_act = datetime.now().strftime("%d/%m/%Y")
             if es_edicion:
                 actualizar_cobro(st.session_state.edit_id, cliente, albaran, importe, user_id)
                 st.session_state.edit_id = None
                 st.success("✅ Cobro actualizado.")
             else:
-                agregar_cobro(fecha_hoy, hora_act, cliente, albaran, importe, user_id)
+                agregar_cobro(fecha_act, hora_act, cliente, albaran, importe, user_id)
                 st.success("✅ Cobro registrado.")
             st.rerun()
 
     st.divider()
     total_cobros = df_cobros["importe"].sum() if not df_cobros.empty else 0.0
-    st.metric("💵 TOTAL VENTAS CAFÉ", f"{total_cobros:.2f} €")
+    st.metric("💵 TOTAL VENTAS CAFÉ (CAJA EN CURSO)", f"{total_cobros:.2f} €")
 
     if not df_cobros.empty:
-        st.write("### Listado de Cobros del Día")
+        st.write("### Listado de Cobros Registrados")
         for _, row in df_cobros.iterrows():
-            with st.expander(f"📌 #{row['albaran'] or row['id']} | {row['cliente']} — {row['importe']:.2f} € ({row['hora']})"):
+            with st.expander(f"📌 #{row['albaran'] or row['id']} | {row['cliente']} — {row['importe']:.2f} € ({row['fecha']} - {row['hora']})"):
                 st.write(f"**Cliente:** {row['cliente']}")
                 st.write(f"**Albarán:** {row['albaran'] if row['albaran'] else 'N/A'}")
                 st.write(f"**Importe:** {row['importe']:.2f} €")
-                st.write(f"**Hora:** {row['hora']}")
+                st.write(f"**Fecha / Hora:** {row['fecha']} a las {row['hora']}")
                 
                 c1, c2 = st.columns(2)
                 with c1:
@@ -245,7 +266,6 @@ with tab_cobros:
 
     st.divider()
 
-    # --- GESTIÓN DE CLIENTES ---
     if lista_clientes:
         with st.expander("👥 Mis Clientes Habituales"):
             st.caption("Elimina de tu lista habitual los clientes que ya no utilices.")
@@ -257,20 +277,6 @@ with tab_cobros:
                     if st.button("🗑️ Borrar", key=f"del_cli_{c_id}"):
                         eliminar_cliente_habitual(c_id, user_id)
                         st.rerun()
-
-    # --- BOTÓN PARA PONER A CERO LA CAJA ---
-    st.write("### 🔄 Reiniciar Mi Caja")
-    st.caption("Pone a cero tus cobros, gastos y tu arqueo. **No afecta a los datos de otros compañeros ni elimina los clientes**.")
-    
-    with st.expander("⚠️ Abrir opciones para poner a cero mi caja"):
-        st.warning(f"¿Estás seguro de que deseas vaciar la caja actual de {user_nombre}?")
-        if st.button("🔴 Confirmar y Poner Mi Caja a Cero", use_container_width=True):
-            vaciar_caja_del_dia(user_id)
-            for d in denominaciones:
-                st.session_state[f"{user_id}_{d}"] = 0
-            st.session_state.edit_id = None
-            st.success("✅ Tu caja ha sido puesta a cero correctamente.")
-            st.rerun()
 
 # ==========================================
 # PESTAÑA 2: GASTOS DE CAJA
@@ -289,7 +295,9 @@ with tab_gastos:
         elif importe_gasto <= 0:
             st.error("El importe debe ser mayor que 0.00 €.")
         else:
-            agregar_gasto(fecha_hoy, datetime.now().strftime("%H:%M"), concepto_gasto.strip(), importe_gasto, user_id)
+            fecha_act = datetime.now().strftime("%d/%m/%Y")
+            hora_act = datetime.now().strftime("%H:%M")
+            agregar_gasto(fecha_act, hora_act, concepto_gasto.strip(), importe_gasto, user_id)
             st.success("✅ Gasto registrado.")
             st.rerun()
 
@@ -301,7 +309,7 @@ with tab_gastos:
         for _, row in df_gastos.iterrows():
             col_g1, col_g2 = st.columns([3, 1])
             with col_g1:
-                st.write(f"• **{row['concepto']}**: {row['importe']:.2f} € ({row['hora']})")
+                st.write(f"• **{row['concepto']}**: {row['importe']:.2f} € ({row['fecha']} - {row['hora']})")
             with col_g2:
                 if st.button("🗑️", key=f"del_g_{row['id']}"):
                     eliminar_gasto(row['id'], user_id)
@@ -354,12 +362,14 @@ with tab_arqueo:
             st.error(f"❌ **FALTANTE:** {diferencia:.2f} € respecto al teórico ({total_teorico:.2f} €)")
 
 # ==========================================
-# PESTAÑA 4: INFORME PDF COMPLETO
+# PESTAÑA 4: INFORME PDF Y CIERRE
 # ==========================================
 with tab_pdf:
-    st.subheader("📄 Generar Hoja de Cierre")
+    st.subheader("📄 Generar Hoja de Cierre y Finalizar Caja")
     
-    st.info(f"**Entregado por:** {user_nombre}", icon="👤")
+    st.info(f"**Comercial:** {user_nombre}", icon="👤")
+    
+    observaciones = st.text_area("Notas / Observaciones del Cierre (opcional):", placeholder="Ej: Se dejan 50€ en monedas para cambio en el cajetín / Sobrante por propina...")
 
     desglose_efectivo = {
         "b100": (b100, b100 * 100),
@@ -377,7 +387,7 @@ with tab_pdf:
         "m001": (m001, m001 * 0.01)
     }
 
-    def generar_pdf_completo(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, persona, desglose):
+    def generar_pdf_completo(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, dif, persona, desglose, obs):
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
         story = []
@@ -388,27 +398,30 @@ with tab_pdf:
         cell_style = ParagraphStyle('Cell', parent=styles['Normal'], fontSize=8, leading=10)
         cell_bold = ParagraphStyle('CellB', parent=styles['Normal'], fontSize=8, leading=10, fontName='Helvetica-Bold')
 
+        fecha_h_gen = datetime.now().strftime("%d/%m/%Y a las %H:%M")
+
         story.append(Paragraph("<b>VENTA CAFÉ — HOJA DE CIERRE DE CAJA</b>", title_style))
         story.append(Spacer(1, 4))
-        story.append(Paragraph(f"<b>Fecha:</b> {fecha_mostrar} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Entregado por:</b> {persona}", sub_style))
+        story.append(Paragraph(f"<b>Fecha/Hora Cierre:</b> {fecha_h_gen} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Entregado por:</b> {persona}", sub_style))
         story.append(Spacer(1, 10))
 
         story.append(Paragraph("<b>VENTAS CAFÉ (ALBARANES)</b>", cell_bold))
         story.append(Spacer(1, 4))
         
-        data_c = [[Paragraph("<b>Nº Albarán</b>", cell_bold), Paragraph("<b>Cliente</b>", cell_bold), Paragraph("<b>Hora</b>", cell_bold), Paragraph("<b>Importe (€)</b>", cell_bold)]]
+        data_c = [[Paragraph("<b>Nº Albarán</b>", cell_bold), Paragraph("<b>Cliente</b>", cell_bold), Paragraph("<b>Fecha/Hora</b>", cell_bold), Paragraph("<b>Importe (€)</b>", cell_bold)]]
         
         if not cobros_df.empty:
             for _, r in cobros_df.iterrows():
+                fh = f"{r['fecha']} {r['hora']}" if 'fecha' in r else str(r['hora'])
                 data_c.append([
                     Paragraph(str(r['albaran']) if r['albaran'] else "-", cell_style),
                     Paragraph(str(r['cliente']), cell_style),
-                    Paragraph(str(r['hora']), cell_style),
+                    Paragraph(fh, cell_style),
                     Paragraph(f"{float(r['importe']):.2f} €", cell_bold)
                 ])
         data_c.append([Paragraph("<b>TOTAL VENTAS</b>", cell_bold), "", "", Paragraph(f"<b>{t_cobros:.2f} €</b>", cell_bold)])
 
-        t_cobros_table = Table(data_c, colWidths=[90, 250, 70, 90])
+        t_cobros_table = Table(data_c, colWidths=[80, 230, 90, 90])
         t_cobros_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E2E8F0')),
             ('GRID', (0, 0), (-1, -2), 0.5, colors.HexColor('#CBD5E1')),
@@ -423,12 +436,13 @@ with tab_pdf:
         if not gastos_df.empty:
             story.append(Paragraph("<b>GASTOS / SALIDAS DE CAJA</b>", cell_bold))
             story.append(Spacer(1, 4))
-            data_g = [[Paragraph("<b>Concepto</b>", cell_bold), Paragraph("<b>Hora</b>", cell_bold), Paragraph("<b>Importe (€)</b>", cell_bold)]]
+            data_g = [[Paragraph("<b>Concepto</b>", cell_bold), Paragraph("<b>Fecha/Hora</b>", cell_bold), Paragraph("<b>Importe (€)</b>", cell_bold)]]
             for _, r in gastos_df.iterrows():
-                data_g.append([Paragraph(str(r['concepto']), cell_style), Paragraph(str(r['hora']), cell_style), Paragraph(f"{float(r['importe']):.2f} €", cell_bold)])
+                fh_g = f"{r['fecha']} {r['hora']}" if 'fecha' in r else str(r['hora'])
+                data_g.append([Paragraph(str(r['concepto']), cell_style), Paragraph(fh_g, cell_style), Paragraph(f"{float(r['importe']):.2f} €", cell_bold)])
             data_g.append([Paragraph("<b>TOTAL GASTOS</b>", cell_bold), "", Paragraph(f"<b>{t_gastos:.2f} €</b>", cell_bold)])
 
-            t_gastos_table = Table(data_g, colWidths=[340, 70, 90])
+            t_gastos_table = Table(data_g, colWidths=[320, 90, 80])
             t_gastos_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#FEE2E2')),
                 ('GRID', (0, 0), (-1, -2), 0.5, colors.HexColor('#FCA5A5')),
@@ -489,21 +503,30 @@ with tab_pdf:
         story.append(Spacer(1, 10))
 
         t_teorico = t_cobros - t_gastos
+        texto_dif = f"+{dif:.2f} € (Sobrante)" if dif > 0 else (f"{dif:.2f} € (Faltante)" if dif < 0 else "0.00 € (Cuadra)")
         data_a = [
             [Paragraph("<b>Total Ventas Albaranes:</b>", cell_style), Paragraph(f"{t_cobros:.2f} €", cell_style), Paragraph("<b>Total Billetes Contados:</b>", cell_style), Paragraph(f"{t_billetes:.2f} €", cell_style)],
             [Paragraph("<b>(-) Gastos en Metálico:</b>", cell_style), Paragraph(f"-{t_gastos:.2f} €", cell_style), Paragraph("<b>Total Monedas Contadas:</b>", cell_style), Paragraph(f"{t_monedas:.2f} €", cell_style)],
-            [Paragraph("<b>TOTAL TEÓRICO CAJA:</b>", cell_bold), Paragraph(f"<b>{t_teorico:.2f} €</b>", cell_bold), Paragraph("<b>TOTAL EFECTIVO CONTADO:</b>", cell_bold), Paragraph(f"<b>{t_fisico:.2f} €</b>", cell_bold)]
+            [Paragraph("<b>TOTAL TEÓRICO CAJA:</b>", cell_bold), Paragraph(f"<b>{t_teorico:.2f} €</b>", cell_bold), Paragraph("<b>TOTAL EFECTIVO CONTADO:</b>", cell_bold), Paragraph(f"<b>{t_fisico:.2f} €</b>", cell_bold)],
+            [Paragraph("<b>DIFERENCIA DE ARQUEO:</b>", cell_bold), Paragraph(f"<b>{texto_dif}</b>", cell_bold), "", ""]
         ]
 
         t_arqueo_table = Table(data_a, colWidths=[130, 120, 130, 120])
         t_arqueo_table.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
-            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#F8FAFC')),
+            ('SPAN', (1, 3), (3, 3)),
+            ('BACKGROUND', (0, 2), (-1, 3), colors.HexColor('#F8FAFC')),
             ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
             ('ALIGN', (3, 0), (3, -1), 'RIGHT'),
             ('PADDING', (0, 0), (-1, -1), 4),
         ]))
         story.append(t_arqueo_table)
+
+        if obs and obs.strip():
+            story.append(Spacer(1, 10))
+            story.append(Paragraph("<b>OBSERVACIONES:</b>", cell_bold))
+            story.append(Spacer(1, 2))
+            story.append(Paragraph(obs.strip(), cell_style))
 
         doc.build(story)
         buffer.seek(0)
@@ -512,15 +535,58 @@ with tab_pdf:
     if not df_cobros.empty:
         pdf_bytes = generar_pdf_completo(
             df_cobros, df_gastos, total_cobros, total_gastos, 
-            total_billetes, total_monedas, total_efectivo_contado, 
-            user_nombre, desglose_efectivo
+            total_billetes, total_monedas, total_efectivo_contado, diferencia,
+            user_nombre, desglose_efectivo, observaciones
         )
         st.download_button(
             label="📥 Descargar Hoja de Cierre en PDF",
             data=pdf_bytes,
-            file_name=f"Cierre_Caja_{user_id}_{fecha_hoy}.pdf",
+            file_name=f"Cierre_Caja_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
             mime="application/pdf",
             use_container_width=True
         )
+
+        st.divider()
+        st.write("### 🔴 Finalizar Cierre y Reiniciar Caja")
+        st.caption("Guarda este resumen en tu historial permanente y vacía la caja activa para empezar el siguiente turno.")
+        
+        with st.expander("⚠️ Confirmar Cierre Definitivo"):
+            st.warning(f"Se guardará el resumen de {total_cobros:.2f} € en tu historial y la caja en curso pasará a cero.")
+            if st.button("🔴 Confirmar y Cerrar Caja", use_container_width=True):
+                cerrar_y_guardar_caja(user_id, total_cobros, total_gastos, total_efectivo_contado, diferencia, observaciones)
+                for d in denominaciones:
+                    st.session_state[f"{user_id}_{d}"] = 0
+                st.session_state.edit_id = None
+                st.success("✅ Caja cerrada y guardada en el historial correctamente.")
+                st.rerun()
     else:
-        st.caption("Registra al menos una venta para poder descargar la hoja en PDF.")
+        st.caption("Registra al menos una venta para poder generar la hoja e iniciar el cierre.")
+
+# ==========================================
+# PESTAÑA 5: HISTORIAL DE CIERRES
+# ==========================================
+with tab_historial:
+    st.subheader("📜 Historial de Cierres Guardados")
+    st.caption("Consulta los resúmenes de tus cajas cerradas anteriormente.")
+
+    historial = obtener_historial_cierres(user_id)
+    if historial:
+        for c in historial:
+            with st.expander(f"🗓️ Cierre del {c['fecha_cierre']} ({c['hora_cierre']}) — Ventas: {c['total_ventas']:.2f} €"):
+                st.write(f"**Fecha y Hora de Cierre:** {c['fecha_cierre']} a las {c['hora_cierre']}")
+                st.write(f"**Total Ventas:** {c['total_ventas']:.2f} €")
+                st.write(f"**Total Gastos:** {c['total_gastos']:.2f} €")
+                st.write(f"**Efectivo Contado:** {c['total_efectivo']:.2f} €")
+                
+                dif_val = float(c['diferencia'])
+                if abs(dif_val) < 0.01:
+                    st.success("✅ Caja cuadrada (Diferencia: 0.00 €)")
+                elif dif_val > 0:
+                    st.warning(f"⚠️ Sobrante: +{dif_val:.2f} €")
+                else:
+                    st.error(f"❌ Faltante: {dif_val:.2f} €")
+
+                if c.get("observaciones"):
+                    st.info(f"**Observaciones:** {c['observaciones']}")
+    else:
+        st.info("Aún no has guardado ningún cierre de caja en el historial.")
