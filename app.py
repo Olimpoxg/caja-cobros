@@ -230,10 +230,10 @@ def generar_pdf_a4(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_moned
 
     t_cobros_table = Table(data_c, colWidths=[80, 230, 90, 90])
     t_cobros_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E2E8F0')),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#CBD5E1')), # Tono gris actualizado
         ('GRID', (0, 0), (-1, -2), 0.5, colors.HexColor('#CBD5E1')),
         ('SPAN', (0, -1), (2, -1)),
-        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#F1F5F9')),
+        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E5E7EB')), # Tono gris actualizado
         ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
         ('PADDING', (0, 0), (-1, -1), 4),
     ]))
@@ -298,11 +298,11 @@ def generar_pdf_a4(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_moned
 
         t_desglose_table = Table(data_desglose, colWidths=[80, 45, 120, 80, 45, 130])
         t_desglose_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#F1F5F9')),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#CBD5E1')), # Tono gris actualizado
             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
             ('SPAN', (0, -1), (1, -1)),
             ('SPAN', (3, -1), (4, -1)),
-            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E2E8F0')),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E5E7EB')), # Tono gris actualizado
             ('ALIGN', (1, 0), (2, -1), 'RIGHT'),
             ('ALIGN', (4, 0), (5, -1), 'RIGHT'),
             ('PADDING', (0, 0), (-1, -1), 3),
@@ -342,7 +342,7 @@ def generar_pdf_a4(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_moned
 
 def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_monedas, t_fisico, dif, persona, desglose, obs, fecha_h_custom=None):
     buffer = io.BytesIO()
-    PAGE_WIDTH = 309.0  # Ancho exacto térmico (112mm)
+    PAGE_WIDTH = 309.0
     
     n_cobros = len(cobros_df) if cobros_df is not None and not cobros_df.empty else 1
     n_gastos = len(gastos_df) if gastos_df is not None and not gastos_df.empty else 0
@@ -381,7 +381,6 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
     story = []
     styles = getSampleStyleSheet()
 
-    # --- INSERCIÓN DEL LOGO CORPORATIVO ---
     try:
         logo = Image("logo.png", width=140, height=56)
         logo.hAlign = 'CENTER'
@@ -423,7 +422,6 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         t_cobros_tbl = Table(data_c, colWidths=[65, 185, 59], repeatRows=0)
         t_cobros_tbl.setStyle(TableStyle([
             ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
-            # Línea de separación negra sólida y de 0.6 para que la térmica la dibuje perfectamente
             ('LINEBELOW', (0, 0), (-1, -2), 0.6, colors.black),
             ('ALIGN', (2, 0), (2, -1), 'RIGHT'),
             ('SPAN', (0, -1), (1, -1)),
@@ -528,7 +526,6 @@ if user_id not in st.session_state.caja_activa_cargada:
             st.session_state[f"{user_id}_observaciones"] = ""
     st.session_state.caja_activa_cargada[user_id] = True
 
-# Cabecera
 col_tit, col_logout = st.columns([3, 1])
 with col_tit:
     st.title("☕ Venta Café — Caja Activa")
@@ -545,12 +542,8 @@ df_gastos = obtener_gastos_activos(user_id)
 lista_clientes = obtener_todos_los_clientes(user_id)
 nombres_clientes = [c[1] for c in lista_clientes]
 
-# --- PESTAÑAS DE NAVEGACIÓN ---
 tab_cobros, tab_gastos, tab_arqueo, tab_pdf, tab_historial = st.tabs(["💰 Cobros", "💸 Gastos", "🧮 Arqueo", "📄 PDF / Cierre", "📜 Historial"])
 
-# ==========================================
-# PESTAÑA 1: COBROS (VENTAS CAFÉ)
-# ==========================================
 with tab_cobros:
     st.subheader("📝 Registrar Cobro")
     
@@ -644,9 +637,6 @@ with tab_cobros:
                         eliminar_cliente_habitual(c_id, user_id)
                         st.rerun()
 
-# ==========================================
-# PESTAÑA 2: GASTOS DE CAJA
-# ==========================================
 with tab_gastos:
     st.subheader("💸 Salidas / Gastos de Caja")
 
@@ -682,9 +672,6 @@ with tab_gastos:
                     eliminar_gasto(row['id'], user_id)
                     st.rerun()
 
-# ==========================================
-# PESTAÑA 3: ARQUEO DE BILLETES Y MONEDAS
-# ==========================================
 with tab_arqueo:
     st.subheader("🧮 Conteo Físico (Billetes y Monedas)")
 
@@ -748,9 +735,6 @@ with tab_arqueo:
         guardar_arqueo_bd(user_id, datos_arqueo, obs_input.strip())
         st.success("✅ Arqueo y observaciones guardados permanentemente en la nube.")
 
-# ==========================================
-# PESTAÑA 4: INFORME PDF Y GENERACIÓN TICKET
-# ==========================================
 with tab_pdf:
     st.subheader("📄 Generar Hoja de Cierre / Ticket")
     
@@ -777,7 +761,6 @@ with tab_pdf:
     }
 
     if not df_cobros.empty:
-        # Opción 1: Generar PDF para Ticketera Datecs
         pdf_ticket_bytes = generar_pdf_ticket_termico(
             df_cobros, df_gastos, total_cobros, total_gastos, 
             total_billetes, total_monedas, total_efectivo_contado, diferencia,
@@ -793,7 +776,6 @@ with tab_pdf:
 
         st.write("---")
 
-        # Opción 2: Generar PDF A4 estándar
         pdf_a4_bytes = generar_pdf_a4(
             df_cobros, df_gastos, total_cobros, total_gastos, 
             total_billetes, total_monedas, total_efectivo_contado, diferencia,
@@ -824,9 +806,6 @@ with tab_pdf:
     else:
         st.caption("Registra al menos una venta para poder generar la hoja e iniciar el cierre.")
 
-# ==========================================
-# PESTAÑA 5: HISTORIAL DE CIERRES
-# ==========================================
 with tab_historial:
     st.subheader("📜 Historial de Cierres Guardados")
     st.caption("Consulta los resúmenes de tus cajas cerradas anteriormente y vuelve a imprimirlos si lo necesitas.")
@@ -850,7 +829,6 @@ with tab_historial:
                 if c.get("observaciones"):
                     st.info(f"**Observaciones:** {c['observaciones']}")
 
-                # Recuperar desglose antiguo guardado
                 desglose_hist = {
                     "b100": (int(c.get("b100") or 0), int(c.get("b100") or 0) * 100),
                     "b50":  (int(c.get("b50") or 0),  int(c.get("b50") or 0) * 50),
@@ -867,7 +845,6 @@ with tab_historial:
                     "m001": (int(c.get("m001") or 0), int(c.get("m001") or 0) * 0.01)
                 }
 
-                # RE-IMPRESIÓN DE CIERRES ANTERIORES CON DESGLOSE COMPLETO
                 st.write("---")
                 st.write("**Re-imprimir este cierre:**")
                 
