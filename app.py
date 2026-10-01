@@ -230,10 +230,10 @@ def generar_pdf_a4(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_moned
 
     t_cobros_table = Table(data_c, colWidths=[80, 230, 90, 90])
     t_cobros_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#CBD5E1')), # Tono gris actualizado
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#CBD5E1')),
         ('GRID', (0, 0), (-1, -2), 0.5, colors.HexColor('#CBD5E1')),
         ('SPAN', (0, -1), (2, -1)),
-        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E5E7EB')), # Tono gris actualizado
+        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E5E7EB')),
         ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
         ('PADDING', (0, 0), (-1, -1), 4),
     ]))
@@ -298,11 +298,11 @@ def generar_pdf_a4(cobros_df, gastos_df, t_cobros, t_gastos, t_billetes, t_moned
 
         t_desglose_table = Table(data_desglose, colWidths=[80, 45, 120, 80, 45, 130])
         t_desglose_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#CBD5E1')), # Tono gris actualizado
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#CBD5E1')),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
             ('SPAN', (0, -1), (1, -1)),
             ('SPAN', (3, -1), (4, -1)),
-            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E5E7EB')), # Tono gris actualizado
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E5E7EB')),
             ('ALIGN', (1, 0), (2, -1), 'RIGHT'),
             ('ALIGN', (4, 0), (5, -1), 'RIGHT'),
             ('PADDING', (0, 0), (-1, -1), 3),
@@ -392,7 +392,9 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
     title_style = ParagraphStyle('TTitle', parent=styles['Title'], fontSize=13, leading=15, alignment=1)
     body_style  = ParagraphStyle('TBody', parent=styles['Normal'], fontSize=9, leading=11, alignment=0)
     bold_style  = ParagraphStyle('TBold', parent=styles['Normal'], fontSize=9, leading=11, fontName='Helvetica-Bold', alignment=0)
-    sub_seccion = ParagraphStyle('TSubS', parent=styles['Normal'], fontSize=9, leading=11, fontName='Helvetica-Bold', textColor=colors.black)
+    
+    # Estilo gris para los separadores de billetes y monedas solicitado
+    sub_seccion = ParagraphStyle('TSubS', parent=styles['Normal'], fontSize=9, leading=11, fontName='Helvetica-Bold', textColor=colors.HexColor('#CBD5E1'))
     
     r_body = ParagraphStyle('RBody', parent=styles['Normal'], fontSize=9, leading=11, alignment=2)
     r_bold = ParagraphStyle('RBold', parent=styles['Normal'], fontSize=9, leading=11, fontName='Helvetica-Bold', alignment=2)
@@ -422,7 +424,7 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         t_cobros_tbl = Table(data_c, colWidths=[65, 185, 59], repeatRows=0)
         t_cobros_tbl.setStyle(TableStyle([
             ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
-            ('LINEBELOW', (0, 0), (-1, -2), 0.6, colors.black),
+            ('LINEBELOW', (0, 0), (-1, -2), 0.6, colors.HexColor('#CBD5E1')), # Línea gris en albaranes solicitada
             ('ALIGN', (2, 0), (2, -1), 'RIGHT'),
             ('SPAN', (0, -1), (1, -1)),
             ('PADDING', (0, 0), (-1, -1), 2.5),
@@ -480,7 +482,7 @@ def generar_pdf_ticket_termico(cobros_df, gastos_df, t_cobros, t_gastos, t_bille
         t_desglose_tbl = Table(data_d, colWidths=[90, 80, 139])
         t_desglose_tbl.setStyle(TableStyle([
             ('LINEBELOW', (0, -1), (-1, -1), 0.8, colors.black),
-            ('LINEBELOW', (0, 0), (-1, -2), 0.4, colors.black),
+            ('LINEBELOW', (0, 0), (-1, -2), 0.4, colors.HexColor('#CBD5E1')), # Línea gris en desglose
             ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
             ('SPAN', (0, -1), (1, -1)),
             ('PADDING', (0, 0), (-1, -1), 2),
@@ -512,7 +514,7 @@ denominaciones = ["b100", "b50", "b20", "b10", "b5", "m200", "m100", "m050", "m0
 if "caja_activa_cargada" not in st.session_state:
     st.session_state.caja_activa_cargada = {}
 
-if user_id not in st.session_state.caja_activa_cargada:
+if user_id not in st.session_state.caja_activa_cargada or not st.session_state.caja_activa_cargada[user_id]:
     bd_arqueo = obtener_arqueo_guardado(user_id)
     if bd_arqueo:
         for d in denominaciones:
@@ -801,6 +803,7 @@ with tab_pdf:
                     st.session_state[f"{user_id}_{d}"] = 0
                 st.session_state[f"{user_id}_observaciones"] = ""
                 st.session_state.edit_id = None
+                st.session_state.caja_activa_cargada[user_id] = False
                 st.success("✅ Caja cerrada y guardada en el historial correctamente.")
                 st.rerun()
     else:
